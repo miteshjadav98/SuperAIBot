@@ -59,32 +59,29 @@ If the tool does not provide the answer, you can let the user know that the info
 """
 
 from langchain.agents import create_agent
-import sys
 
-# Connect to Redis for persistent LangGraph state memory
-# pyrefly: ignore [missing-import]
-from redis import Redis
-import os
-
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from simple_redis_saver import SimpleRedisSaver
-
-redis_host = os.getenv("REDIS_HOST", "localhost")
-redis_port = int(os.getenv("REDIS_PORT", 6379))
-redis_password = os.getenv("REDIS_PASSWORD", None)
-
-try:
-    redis_conn = Redis(host=redis_host, port=redis_port, db=0, password=redis_password)
-    # Just to verify connection early
-    redis_conn.ping()
-    memory = SimpleRedisSaver(redis_conn)
-except Exception as e:
-    print(f"Failed to connect to Redis: {e}")
-    memory = None
-
+# NOTE: no custom checkpointer here. When this graph is served by the LangGraph
+# API server (via langgraph.json) the platform provides persistence itself, and
+# it rejects any graph that ships its own checkpointer (GraphLoadError). Every
+# other agent on the platform follows the same rule, so PDF Chatbot does too.
 agent = create_agent(
     model=azure_model,
     tools=[ask_pdf_knowledge_base],
     system_prompt=system_prompt,
-    checkpointer=memory
+)
+
+from core.base_agent import AgentManifest
+
+MANIFEST = AgentManifest(
+    id="pdf_chatbot",
+    label="PDF Chatbot",
+    emoji="📄",
+    description=(
+        "Answers questions grounded in the content of PDF documents the user "
+        "has uploaded. Use for anything about an uploaded file, document, "
+        "report, paper, or 'the PDF'."
+    ),
+    agent_type="langchain",
+    builder=lambda: agent,
+    tags=["pdf", "rag", "documents"],
 )
