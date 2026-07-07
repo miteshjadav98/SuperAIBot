@@ -1,8 +1,21 @@
-# 🦜 MegaProject — Super Bot Agent Platform
+# 🤖 SuperBot — Plug-and-Play AI Agent Platform
 
-A plug-and-play AI agent platform: one chat UI, a dropdown, and a **Super Bot**
-that auto-routes each message to the right agent. Pick a specific agent to talk
-to it directly, or pick **🤖 Super Bot (Auto)** and let the LLM router choose.
+A plug-and-play AI agent platform: one chat UI (branded **SuperBot**), a
+dropdown, and a **Super Bot** router that auto-routes each message to the right
+agent. Pick a specific agent to talk to it directly, or pick **🤖 Super Bot
+(Auto)** and let the LLM router choose. Sign in with email + password — every
+user gets their own private chat history.
+
+Each agent doubles as a worked example of an agent-engineering concept:
+
+| Concept | Where to look |
+| --- | --- |
+| **Multi-agent supervisor / routing** | `superbot` graph — LLM classifier + delegation over the registry |
+| **Multi-agent coordinator (agents-as-tools)** | Wedding Planner — flights (MCP) + venues (search) + SQL playlist |
+| **RAG (retrieval-augmented generation)** | PDF Chatbot — chunk → embed → Atlas Vector Search → grounded answers |
+| **Single agent, multiple tools** | Personal Chef / Movie Recommender — `create_agent` + web search tools |
+| **Human-in-the-loop interrupts** | Email Agent — approval before any send |
+| **MCP tool loading** | `tools/mcp.py` + `mcp_servers.json` — remote/stdio tool servers |
 
 | Agent | What it does |
 | --- | --- |
@@ -10,7 +23,7 @@ to it directly, or pick **🤖 Super Bot (Auto)** and let the LLM router choose.
 | 🍳 **Personal Chef** | Suggests recipes from your leftover ingredients (web search via Tavily). |
 | ✉️ **Email Agent** | Authenticates, reads an inbox, and sends email — with **human-in-the-loop approval** before anything is sent. |
 | 💍 **Wedding Planner** | Multi-agent coordinator: flights (remote MCP), venues (web search), and a playlist (SQL over `Chinook.db`). |
-| 📄 **PDF Chatbot** | RAG over PDFs — **attach a PDF in the chat** (or `POST /upload`) and ask about it. Redis-backed memory. |
+| 📄 **PDF Chatbot** | RAG over PDFs — **attach a PDF in the chat** (or `POST /upload`) and ask about it. MongoDB Atlas Vector Search-backed. |
 | 🎬 **Movie Recommender** | Suggests films from your taste (web search). The reference example for adding an agent. |
 
 **This project is fully self-contained** — its own `.env`, agent code, database,
@@ -84,7 +97,11 @@ MANIFEST = AgentManifest(
 | --- | --- |
 | [`backend/core/registry.py`](backend/core/registry.py) | `"agents.movie_recommender"` to `_AGENT_MODULES` |
 | [`backend/langgraph.json`](backend/langgraph.json) | `"movie_recommender": "./agents/movie_recommender.py:agent"` |
-| [`frontend/src/components/agent-switcher.tsx`](frontend/src/components/agent-switcher.tsx) | `{ id: "movie_recommender", label: "Movie Recommender", emoji: "🎬" }` |
+
+The frontend dropdown discovers agents from `GET :8000/agents` at runtime, so
+**no frontend change is needed** (the fallback list in
+[`agent-switcher.tsx`](frontend/src/components/agent-switcher.tsx) is only used
+while the gateway is unreachable).
 
 **Step 3 — Add tools if needed.** Define `@tool` functions in the agent file (or a
 shared module) and pass them to `create_agent`. That's it — the registry, the
@@ -133,6 +150,36 @@ message before the model runs. The REST route `POST :8000/upload` is also availa
 batch/API ingestion. (Both feed the same retrieval tool; the in-message path is what makes
 the UI upload button "just work" for RAG.)
 
+## Authentication & MongoDB Atlas
+
+Users register/sign in with **email + password** (phone is an optional profile
+field). The FastAPI gateway issues a JWT (`/auth/register`, `/auth/login`,
+`/auth/me`); the LangGraph server validates the same JWT on every request via
+custom auth ([`backend/core/lg_auth.py`](backend/core/lg_auth.py)) and stamps +
+filters threads by `metadata.owner` — **each user only sees their own chats**.
+
+MongoDB Atlas backs three things (all in one cluster/db, `MONGODB_DB`):
+
+| Collection | Used for |
+| --- | --- |
+| `users` | accounts (email, bcrypt password hash, optional phone) |
+| `pdf_chunks` | Atlas **Vector Search** index for PDF RAG — uploads survive restarts |
+| `checkpoints*` | gateway (`/chat`, `/ask`) conversation memory per user |
+
+**Atlas setup (one time):**
+
+1. In [cloud.mongodb.com](https://cloud.mongodb.com) create a cluster — the free
+   **M0** tier is enough (Vector Search included); your credits cover an M10
+   upgrade later if you need it.
+2. *Database Access* → create a DB user; *Network Access* → allow your IP
+   (or `0.0.0.0/0` while developing).
+3. *Connect → Drivers* → copy the `mongodb+srv://...` string into `MONGODB_URI`
+   in [`.env`](.env).
+
+Without `MONGODB_URI` the platform still boots: PDF RAG falls back to an
+in-memory store and `/auth/*` returns 503 — but login (and therefore the chat
+UI) needs it, so set it first.
+
 ## Prerequisites
 
 - Python 3.11–3.13
@@ -180,7 +227,8 @@ cd C:\Users\user\Music\MegaProject\frontend
 npm run dev
 ```
 
-Then open **http://localhost:3000**. The dropdown defaults to **Super Bot (Auto)** —
+Then open **http://localhost:3000**, create an account (email + password), and
+you land in the chat. The dropdown defaults to **Super Bot (Auto)** —
 just type and it routes. Or pick a specific agent. Try:
 
 - Super Bot → *"What should I watch tonight? I loved Inception."* (routes to Movie Recommender)
@@ -190,6 +238,8 @@ just type and it routes. Or pick a specific agent. Try:
 
 Prefer the API? `POST http://localhost:8000/chat` with `{"query": "..."}` (LLM-routed)
 or add `"agent_id": "personal_chef"` to target an agent directly; `GET /agents` lists them.
+`/chat`, `/ask`, and `/upload` need an `Authorization: Bearer <token>` header from
+`POST /auth/login`; `/chat` remembers the conversation per `thread_id` (stored in Mongo).
 
 Stop a server with **Ctrl+C** in its window. LangSmith tracing is on (via
 `.env`), so every run shows up in your LangSmith project.
@@ -207,7 +257,7 @@ Stop a server with **Ctrl+C** in its window. LangSmith tracing is on (via
 - **LLM provider** is set once by `default_llm_provider` in [`core/settings.py`](backend/core/settings.py)
   (Azure by default). Switch to `openai`/`anthropic`/`gemini`/`ollama` there or per call via
   `get_chat_model(provider=...)`; install the matching optional package from `requirements.txt`.
-- **Redis** (PDF Chatbot memory) is read from `REDIS_*` in [`.env`](.env); if unreachable the
-  agent runs without persistent memory rather than blocking startup.
+- **MongoDB Atlas** is read from `MONGODB_URI` in [`.env`](.env); if unset the platform
+  boots with in-memory fallbacks (no login, no persistent RAG) rather than blocking startup.
 - To change keys, ports, or the default agent, edit [`.env`](.env) and
   [`frontend/.env.local`](frontend/.env.local).

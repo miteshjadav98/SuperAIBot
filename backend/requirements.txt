@@ -31,4 +31,13 @@ fastapi
 uvicorn
 pypdf
 python-multipart
-redis
+
+# MongoDB Atlas: users (auth), PDF vector search, gateway chat memory
+pymongo
+langchain-mongodb
+langgraph-checkpoint-mongodb
+
+# Auth
+bcrypt
+PyJWT
+email-validator  # pydantic EmailStr

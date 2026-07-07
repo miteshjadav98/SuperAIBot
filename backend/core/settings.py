@@ -41,10 +41,13 @@ class Settings(BaseSettings):
     # Tools.
     tavily_api_key: Optional[str] = None
 
-    # Redis (checkpointer / session memory).
-    redis_host: str = "localhost"
-    redis_port: int = 6379
-    redis_password: Optional[str] = None
+    # MongoDB Atlas (users, PDF vector search, gateway chat memory).
+    mongodb_uri: Optional[str] = None
+    mongodb_db: str = "superbot"
+
+    # Auth (JWT for the gateway + the LangGraph server's custom auth).
+    auth_secret: str = "change-me-in-.env"
+    access_token_ttl_hours: int = 72
 
     # Super Bot router fallback when classification is uncertain.
     default_agent_id: str = "personal_chef"

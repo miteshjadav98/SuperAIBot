@@ -12,8 +12,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Agent Chat",
-  description: "Agent Chat UX by LangChain",
+  title: "SuperBot",
+  description: "SuperBot — your all-in-one AI assistant",
 };
 
 export default function RootLayout({

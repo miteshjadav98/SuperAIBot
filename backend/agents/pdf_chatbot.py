@@ -28,12 +28,58 @@ embeddings = AzureOpenAIEmbeddings(
     api_version=AZURE_API_VERSION
 )
 
-# Global in-memory vector store
-vector_store = InMemoryVectorStore(embeddings)
+VECTOR_INDEX_NAME = "pdf_vector_index"
+EMBEDDING_DIMS = 1536  # text-embedding-3-small
+
+_index_ready = False
+
+
+def _ensure_vector_index() -> None:
+    """Create the Atlas Vector Search index if missing. Retried on every store
+    use (not just import) because Atlas' search service can lag behind the
+    database being reachable."""
+    global _index_ready
+    if _index_ready or isinstance(vector_store, InMemoryVectorStore):
+        return
+    from core import db
+
+    try:
+        collection = db.pdf_chunks_collection()
+        existing = [idx["name"] for idx in collection.list_search_indexes()]
+        if VECTOR_INDEX_NAME not in existing:
+            vector_store.create_vector_search_index(dimensions=EMBEDDING_DIMS)
+            print(f"[pdf_chatbot] created Atlas search index '{VECTOR_INDEX_NAME}'")
+        _index_ready = True
+    except Exception as exc:  # noqa: BLE001 — retry on next use
+        print(f"[pdf_chatbot] vector index not ready yet: {exc}")
+
+
+def _build_vector_store():
+    """Atlas Vector Search when MONGODB_URI is set (PDFs survive restarts);
+    otherwise fall back to the old in-memory store so the agent still works."""
+    from core import db
+
+    if not db.mongo_configured():
+        print("[pdf_chatbot] MONGODB_URI not set — using in-memory vector store.")
+        return InMemoryVectorStore(embeddings)
+
+    from langchain_mongodb import MongoDBAtlasVectorSearch
+
+    return MongoDBAtlasVectorSearch(
+        collection=db.pdf_chunks_collection(),
+        embedding=embeddings,
+        index_name=VECTOR_INDEX_NAME,
+        relevance_score_fn="cosine",
+    )
+
+
+vector_store = _build_vector_store()
+_ensure_vector_index()
 
 def add_documents_to_store(docs: List[Document]):
     """Helper for the FastAPI server to add documents to the store."""
     if docs:
+        _ensure_vector_index()
         vector_store.add_documents(documents=docs)
 
 @tool
@@ -41,6 +87,7 @@ def ask_pdf_knowledge_base(query: str) -> str:
     """Ask a question to the PDF knowledge base to retrieve answers from the uploaded documents."""
     try:
         # Search for relevant documents
+        _ensure_vector_index()
         results = vector_store.similarity_search(query, k=3)
         if not results:
             return "No relevant information found in the uploaded documents."

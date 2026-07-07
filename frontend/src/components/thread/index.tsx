@@ -1,6 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
 import { ReactNode, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useStreamContext } from "@/providers/Stream";
 import { useState, FormEvent } from "react";
@@ -12,7 +11,7 @@ import {
   DO_NOT_RENDER_ID_PREFIX,
   ensureToolCallsHaveResponses,
 } from "@/lib/ensure-tool-responses";
-import { LangGraphLogoSVG } from "../icons/langgraph";
+import { SuperBotLogoSVG } from "../icons/superbot";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import {
   ArrowDown,
@@ -32,13 +31,6 @@ import { toast } from "sonner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
-import { GitHubSVG } from "../icons/github";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../ui/tooltip";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
 import {
@@ -86,30 +78,6 @@ function ScrollToBottom(props: { className?: string }) {
       <ArrowDown className="h-4 w-4" />
       <span>Scroll to bottom</span>
     </Button>
-  );
-}
-
-function OpenGitHubRepo() {
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <a
-            href="https://github.com/langchain-ai/agent-chat-ui"
-            target="_blank"
-            className="flex items-center justify-center"
-          >
-            <GitHubSVG
-              width="24"
-              height="24"
-            />
-          </a>
-        </TooltipTrigger>
-        <TooltipContent side="left">
-          <p>Open GitHub repo</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }
 
@@ -259,56 +227,29 @@ export function Thread() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
-      <div className="relative hidden lg:flex">
-        <motion.div
-          className="absolute z-20 h-full overflow-hidden border-r bg-background"
+      <div
+        className="hidden h-full overflow-hidden border-r bg-background transition-[width] duration-300 ease-out lg:block"
+        style={{ width: isLargeScreen && chatHistoryOpen ? 300 : 0 }}
+      >
+        <div
+          className="h-full"
           style={{ width: 300 }}
-          animate={
-            isLargeScreen
-              ? { x: chatHistoryOpen ? 0 : -300 }
-              : { x: chatHistoryOpen ? 0 : -300 }
-          }
-          initial={{ x: -300 }}
-          transition={
-            isLargeScreen
-              ? { type: "spring", stiffness: 300, damping: 30 }
-              : { duration: 0 }
-          }
         >
-          <div
-            className="relative h-full"
-            style={{ width: 300 }}
-          >
-            <ThreadHistory />
-          </div>
-        </motion.div>
+          <ThreadHistory />
+        </div>
       </div>
 
       <div
         className={cn(
-          "grid w-full grid-cols-[1fr_0fr] transition-all duration-500",
+          "grid min-w-0 flex-1 grid-cols-[1fr_0fr] transition-all duration-500",
           artifactOpen && "grid-cols-[3fr_2fr]",
         )}
       >
-        <motion.div
+        <div
           className={cn(
             "relative flex min-w-0 flex-1 flex-col overflow-hidden",
             !chatStarted && "grid-rows-[1fr]",
           )}
-          layout={isLargeScreen}
-          animate={{
-            marginLeft: chatHistoryOpen ? (isLargeScreen ? 300 : 0) : 0,
-            width: chatHistoryOpen
-              ? isLargeScreen
-                ? "calc(100% - 300px)"
-                : "100%"
-              : "100%",
-          }}
-          transition={
-            isLargeScreen
-              ? { type: "spring", stiffness: 300, damping: 30 }
-              : { duration: 0 }
-          }
         >
           {!chatStarted && (
             <div className="absolute top-0 left-0 z-10 flex w-full items-center justify-between gap-3 p-2 pl-4">
@@ -330,7 +271,6 @@ export function Thread() {
               <div className="absolute top-2 right-4 flex items-center gap-4">
                 <AgentSwitcher />
                 <ThemeToggle />
-                <OpenGitHubRepo />
               </div>
             </div>
           )}
@@ -352,34 +292,26 @@ export function Thread() {
                     </Button>
                   )}
                 </div>
-                <motion.button
-                  className="flex cursor-pointer items-center gap-2"
+                <button
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2 transition-[margin] duration-300",
+                    !chatHistoryOpen && "ml-12",
+                  )}
                   onClick={() => setThreadId(null)}
-                  animate={{
-                    marginLeft: !chatHistoryOpen ? 48 : 0,
-                  }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 300,
-                    damping: 30,
-                  }}
                 >
-                  <LangGraphLogoSVG
+                  <SuperBotLogoSVG
                     width={32}
                     height={32}
                   />
                   <span className="text-xl font-semibold tracking-tight">
-                    Agent Chat
+                    SuperBot
                   </span>
-                </motion.button>
+                </button>
               </div>
 
               <div className="flex items-center gap-4">
                 <AgentSwitcher />
                 <ThemeToggle />
-                <div className="flex items-center">
-                  <OpenGitHubRepo />
-                </div>
                 <TooltipIconButton
                   size="lg"
                   className="p-4"
@@ -442,9 +374,9 @@ export function Thread() {
                 <div className="sticky bottom-0 flex flex-col items-center gap-8 bg-background">
                   {!chatStarted && (
                     <div className="flex items-center gap-3">
-                      <LangGraphLogoSVG className="h-8 flex-shrink-0" />
+                      <SuperBotLogoSVG className="h-8 w-8 flex-shrink-0" />
                       <h1 className="text-2xl font-semibold tracking-tight">
-                        Agent Chat
+                        SuperBot
                       </h1>
                     </div>
                   )}
@@ -550,7 +482,7 @@ export function Thread() {
               }
             />
           </StickToBottom>
-        </motion.div>
+        </div>
         <div className="relative flex flex-col border-l">
           <div className="absolute inset-0 flex min-w-[30vw] flex-col">
             <div className="grid grid-cols-[1fr_auto] border-b p-4">

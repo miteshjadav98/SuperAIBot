@@ -12,8 +12,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelRightOpen, PanelRightClose } from "lucide-react";
+import { PanelRightOpen, PanelRightClose, LogOut } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useAuth } from "@/providers/Auth";
+import { TooltipIconButton } from "@/components/thread/tooltip-icon-button";
 
 function ThreadList({
   threads,
@@ -58,6 +60,28 @@ function ThreadList({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function AccountFooter() {
+  const { user, logout } = useAuth();
+  if (!user) return null;
+  return (
+    <div className="flex w-full items-center justify-between gap-2 border-t px-4 py-3">
+      <span
+        className="text-muted-foreground truncate text-sm"
+        title={user.email}
+      >
+        {user.email}
+      </span>
+      <TooltipIconButton
+        tooltip="Sign out"
+        variant="ghost"
+        onClick={logout}
+      >
+        <LogOut className="size-4" />
+      </TooltipIconButton>
     </div>
   );
 }
@@ -110,14 +134,17 @@ export default function ThreadHistory() {
             )}
           </Button>
           <h1 className="text-xl font-semibold tracking-tight">
-            Thread History
+            Chat History
           </h1>
         </div>
-        {threadsLoading ? (
-          <ThreadHistoryLoading />
-        ) : (
-          <ThreadList threads={threads} />
-        )}
+        <div className="flex min-h-0 w-full flex-1 flex-col">
+          {threadsLoading ? (
+            <ThreadHistoryLoading />
+          ) : (
+            <ThreadList threads={threads} />
+          )}
+        </div>
+        <AccountFooter />
       </div>
       <div className="lg:hidden">
         <Sheet
@@ -132,7 +159,7 @@ export default function ThreadHistory() {
             className="flex lg:hidden"
           >
             <SheetHeader>
-              <SheetTitle>Thread History</SheetTitle>
+              <SheetTitle>Chat History</SheetTitle>
             </SheetHeader>
             <ThreadList
               threads={threads}

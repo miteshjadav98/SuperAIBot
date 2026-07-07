@@ -8,5 +8,8 @@
     "pdf_chatbot": "./agents/pdf_chatbot.py:agent",
     "movie_recommender": "./agents/movie_recommender.py:agent"
   },
+  "auth": {
+    "path": "./core/lg_auth.py:auth"
+  },
   "env": "../.env"
 }

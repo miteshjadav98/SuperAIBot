@@ -54,6 +54,20 @@ if [ ! -f "$APP_DIR/.env" ]; then
     exit 1
 fi
 
+# .env is gitignored, so a fresh `git pull` never updates it. Auth + MongoDB
+# were added after the first deploy — fail early if this box's .env predates them.
+for required in MONGODB_URI AUTH_SECRET; do
+    if ! grep -qE "^${required}=.+" "$APP_DIR/.env"; then
+        echo "ERROR: $required is missing from $APP_DIR/.env."
+        echo "       This box's .env is out of date. Add (see .env.example):"
+        echo "         MONGODB_URI  — Atlas connection string (Connect > Drivers)"
+        echo "         MONGODB_DB   — e.g. superbot"
+        echo "         AUTH_SECRET  — python -c \"import secrets; print(secrets.token_hex(32))\""
+        echo "       and remove the old REDIS_* lines. Then re-run this script."
+        exit 1
+    fi
+done
+
 # ---- 3. Python virtual environment ---------------------------------------
 echo "==> Creating Python virtual environment (.venv)..."
 python3 -m venv "$APP_DIR/.venv"
@@ -66,8 +80,12 @@ python3 -m venv "$APP_DIR/.venv"
 # route; that route proxies to LangGraph server-side via LANGGRAPH_API_URL.
 echo "==> Writing frontend production env..."
 LANGSMITH_KEY="$(grep -E '^LANGSMITH_API_KEY=' "$APP_DIR/.env" | head -1 | cut -d= -f2- | tr -d "\"'" || true)"
+# NEXT_PUBLIC_GATEWAY_URL is called DIRECTLY from the browser (login/register,
+# the agent dropdown, PDF upload), so it must be a public, same-origin path.
+# nginx proxies https://$DOMAIN/gateway -> the internal FastAPI gateway.
 cat <<EOF > "$APP_DIR/frontend/.env.production.local"
 NEXT_PUBLIC_API_URL=https://$DOMAIN/api
+NEXT_PUBLIC_GATEWAY_URL=https://$DOMAIN/gateway
 NEXT_PUBLIC_ASSISTANT_ID=superbot
 LANGGRAPH_API_URL=http://127.0.0.1:$LANGGRAPH_PORT
 LANGSMITH_API_KEY=$LANGSMITH_KEY
@@ -150,6 +168,18 @@ server {
 
     # Allow large PDF uploads to the pdf_chatbot agent
     client_max_body_size 100M;
+
+    # FastAPI gateway (auth, agent list, PDF RAG). Called directly from the
+    # browser via NEXT_PUBLIC_GATEWAY_URL=https://$DOMAIN/gateway. The trailing
+    # slash on proxy_pass strips the /gateway prefix (/gateway/auth/login ->
+    # /auth/login on the gateway).
+    location /gateway/ {
+        proxy_pass http://127.0.0.1:$GATEWAY_PORT/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:$FRONTEND_PORT;
