@@ -1,0 +1,12 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "superbot": "./superbot/graph.py:agent",
+    "personal_chef": "./agents/personal_chef.py:agent",
+    "wedding_planner": "./agents/wedding_planner.py:agent",
+    "email_agent": "./agents/email_agent.py:agent",
+    "pdf_chatbot": "./agents/pdf_chatbot.py:agent",
+    "movie_recommender": "./agents/movie_recommender.py:agent"
+  },
+  "env": "../.env"
+}

@@ -1,0 +1,6 @@
+{
+  "travel": {
+    "transport": "streamable_http",
+    "url": "https://mcp.kiwi.com"
+  }
+}
