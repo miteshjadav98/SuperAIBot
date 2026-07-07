@@ -33,6 +33,8 @@ import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
+import { ingestPdfBlock, isPdfBlock } from "@/lib/multimodal-utils";
+import { useAuth } from "@/providers/Auth";
 import {
   useArtifactOpen,
   ArtifactContent,
@@ -86,6 +88,8 @@ export function Thread() {
   const [artifactOpen, closeArtifact] = useArtifactOpen();
 
   const [threadId, _setThreadId] = useQueryState("threadId");
+  const [assistantId] = useQueryState("assistantId");
+  const { token } = useAuth();
   const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
     "chatHistoryOpen",
     parseAsBoolean.withDefault(false),
@@ -164,7 +168,7 @@ export function Thread() {
     prevMessageLength.current = messages.length;
   }, [messages]);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if ((input.trim().length === 0 && contentBlocks.length === 0) || isLoading)
       return;
@@ -178,6 +182,42 @@ export function Thread() {
         ...contentBlocks,
       ] as Message["content"],
     };
+
+    // For the PDF chatbot, push any attached PDFs through the FastAPI /upload
+    // endpoint so they're chunked + embedded into the Atlas vector store, making
+    // them retrievable by the `ask_pdf_knowledge_base` RAG tool (not just
+    // readable inline for this single turn). We await indexing before streaming
+    // the message so the RAG tool can already find the chunks on this first turn.
+    if (assistantId === "pdf_chatbot") {
+      const pdfBlocks = contentBlocks.filter(isPdfBlock);
+      if (pdfBlocks.length > 0) {
+        const label =
+          pdfBlocks.length === 1 ? "PDF" : `${pdfBlocks.length} PDFs`;
+        const toastId = toast.loading(`Indexing ${label} for search…`);
+        try {
+          const results = await Promise.all(
+            pdfBlocks.map((block) => ingestPdfBlock(block, token)),
+          );
+          const totalChunks = results.reduce((sum, r) => sum + r.chunks, 0);
+          toast.success(`Indexed ${label} (${totalChunks} chunks).`, {
+            id: toastId,
+          });
+        } catch (err) {
+          toast.error(`Could not index ${label}.`, {
+            id: toastId,
+            description: (
+              <p>
+                <code>{err instanceof Error ? err.message : String(err)}</code>
+              </p>
+            ),
+          });
+          // Indexing failed — abort (leaving the input + attachment in place)
+          // so the user can retry rather than asking against a knowledge base
+          // that doesn't have the document.
+          return;
+        }
+      }
+    }
 
     const toolMessages = ensureToolCallsHaveResponses(stream.messages);
 

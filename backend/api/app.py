@@ -240,10 +240,13 @@ async def upload_pdf(
             chunk_size=1000, chunk_overlap=200, add_start_index=True
         ).split_documents(documents)
 
-        add_documents_to_store(splits)
+        # Block until the chunks are actually queryable by Atlas Vector Search,
+        # so the caller can rely on RAG retrieval as soon as this returns.
+        searchable = add_documents_to_store(splits, wait_for_index=True)
         return {
             "message": f"Successfully uploaded and processed {file.filename}",
             "chunks": len(splits),
+            "searchable": searchable,
         }
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc))

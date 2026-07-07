@@ -1,5 +1,6 @@
 import { ContentBlock } from "@langchain/core/messages";
 import { toast } from "sonner";
+import { GATEWAY_URL } from "@/providers/Auth";
 
 // Returns a Promise of a typed multimodal block for images or PDFs
 export async function fileToContentBlock(
@@ -25,19 +26,27 @@ export async function fileToContentBlock(
   if (supportedImageTypes.includes(file.type)) {
     return {
       type: "image",
+      // source_type + mime_type (snake_case) are what LangChain's Python
+      // OpenAI block translator looks for to build the `image_url` payload;
+      // mimeType (camelCase) is kept for our own preview rendering.
+      source_type: "base64",
+      mime_type: file.type,
       mimeType: file.type,
       data,
       metadata: { name: file.name },
-    };
+    } as ContentBlock.Multimodal.Data;
   }
 
   // PDF
   return {
     type: "file",
+    source_type: "base64",
+    mime_type: "application/pdf",
     mimeType: "application/pdf",
     data,
+    filename: file.name,
     metadata: { filename: file.name },
-  };
+  } as ContentBlock.Multimodal.Data;
 }
 
 // Helper to convert File to base64 string
@@ -52,6 +61,65 @@ export async function fileToBase64(file: File): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// True for a PDF file content block (checks both snake_case and camelCase mime).
+export function isPdfBlock(block: ContentBlock.Multimodal.Data): boolean {
+  if (block.type !== "file") return false;
+  const b = block as { mimeType?: unknown; mime_type?: unknown };
+  return (
+    b.mimeType === "application/pdf" || b.mime_type === "application/pdf"
+  );
+}
+
+// Decode a base64 string into a Blob (browser atob → byte array).
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  const byteChars = atob(base64);
+  const byteNumbers = new Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i += 1) {
+    byteNumbers[i] = byteChars.charCodeAt(i);
+  }
+  return new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
+}
+
+/**
+ * Send a chat-attached PDF to the FastAPI `/upload` endpoint so it is chunked,
+ * embedded, and persisted in the Atlas vector store — making it retrievable by
+ * the pdf_chatbot's `ask_pdf_knowledge_base` RAG tool across future turns. The
+ * inline base64 block is still sent with the message so the model can also read
+ * the file directly on the current turn.
+ */
+export async function ingestPdfBlock(
+  block: ContentBlock.Multimodal.Data,
+  token: string | null,
+): Promise<{ filename: string; chunks: number }> {
+  const meta = (block.metadata ?? {}) as { filename?: string };
+  const filename =
+    meta.filename ||
+    (block as { filename?: string }).filename ||
+    "document.pdf";
+
+  const blob = base64ToBlob(
+    (block as { data: string }).data,
+    "application/pdf",
+  );
+  const formData = new FormData();
+  formData.append("file", blob, filename);
+
+  const res = await fetch(`${GATEWAY_URL}/upload`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+  });
+  const data = await res.json().catch(() => ({}) as Record<string, unknown>);
+  if (!res.ok) {
+    throw new Error(
+      typeof (data as { detail?: unknown }).detail === "string"
+        ? (data as { detail: string }).detail
+        : "PDF ingestion failed",
+    );
+  }
+  return { filename, chunks: Number((data as { chunks?: number }).chunks ?? 0) };
 }
 
 // Type guard for Base64ContentBlock

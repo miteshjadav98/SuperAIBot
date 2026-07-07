@@ -76,11 +76,45 @@ def _build_vector_store():
 vector_store = _build_vector_store()
 _ensure_vector_index()
 
-def add_documents_to_store(docs: List[Document]):
-    """Helper for the FastAPI server to add documents to the store."""
+def _wait_until_searchable(docs: List[Document], timeout: float = 45.0) -> bool:
+    """Block until the just-added docs are queryable by Atlas Vector Search.
+
+    Atlas' vector index is eventually consistent: `add_documents` returns as soon
+    as the rows are written, but similarity_search won't surface them for ~10-15s
+    while the search node indexes the new embeddings. We poll until a probe query
+    finds our content so callers can guarantee first-turn RAG retrieval.
+    Returns True once searchable, False if it timed out (best-effort)."""
+    import time
+
+    if isinstance(vector_store, InMemoryVectorStore):
+        return True  # in-memory store is searchable immediately
+
+    probe = (docs[0].page_content or "").strip()[:400] or "document"
+    wanted = docs[0].page_content
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            results = vector_store.similarity_search(probe, k=5)
+            if any(r.page_content == wanted for r in results):
+                return True
+        except Exception:  # noqa: BLE001 — index may not be live yet; retry
+            pass
+        time.sleep(2)
+    return False
+
+
+def add_documents_to_store(docs: List[Document], wait_for_index: bool = False):
+    """Helper for the FastAPI server to add documents to the store.
+
+    When `wait_for_index` is True, block until the documents are actually
+    queryable (see `_wait_until_searchable`) so the caller can rely on RAG
+    retrieval immediately after this returns."""
     if docs:
         _ensure_vector_index()
         vector_store.add_documents(documents=docs)
+        if wait_for_index:
+            return _wait_until_searchable(docs)
+    return True
 
 @tool
 def ask_pdf_knowledge_base(query: str) -> str:
