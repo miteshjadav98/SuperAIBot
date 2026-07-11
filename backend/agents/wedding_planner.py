@@ -1,4 +1,5 @@
 import os
+from datetime import date
 from typing import Dict, Any
 from dotenv import load_dotenv
 
@@ -61,6 +62,7 @@ class WeddingState(AgentState):
     destination: str
     guest_count: str
     genre: str
+    wedding_date: str
 
 
 # --- SUB-AGENTS ---
@@ -129,7 +131,25 @@ async def search_flights(runtime: ToolRuntime) -> str:
     """Travel agent searches for flights to the desired destination wedding location."""
     origin = runtime.state.get("origin", "")
     destination = runtime.state.get("destination", "")
-    response = await travel_agent.ainvoke({"messages": [HumanMessage(content=f"Find flights from {origin} to {destination}")]})
+    wedding_date = runtime.state.get("wedding_date", "")
+    # The model's training cutoff makes it default to past departure dates, which
+    # return zero flights. Anchor it to today, use the user's wedding date when we
+    # have one, and forbid past dates so it searches real, bookable dates.
+    today = date.today().strftime("%d/%m/%Y")
+    if wedding_date:
+        message = (
+            f"Today's date is {today}. The wedding is on {wedding_date}. "
+            f"Find one-way flights from {origin} to {destination} that arrive shortly "
+            f"before the wedding — search departure dates on or just before {wedding_date}. "
+            "Never search dates in the past."
+        )
+    else:
+        message = (
+            f"Today's date is {today}. Find flights from {origin} to {destination}. "
+            "Only search for departure dates in the future (after today) — never search "
+            "dates in the past."
+        )
+    response = await travel_agent.ainvoke({"messages": [HumanMessage(content=message)]})
     return response['messages'][-1].content
 
 @tool
@@ -150,15 +170,18 @@ def suggest_playlist(runtime: ToolRuntime) -> str:
     return response['messages'][-1].content
 
 @tool
-def update_state(origin: str, destination: str, guest_count: str, genre: str, runtime: ToolRuntime) -> str:
-    """Update the state when you know all of the values: origin, destination, guest_count, genre. 
+def update_state(origin: str, destination: str, guest_count: str, genre: str, wedding_date: str, runtime: ToolRuntime) -> str:
+    """Update the state when you know all of the values: origin, destination, guest_count, genre, wedding_date.
+    Ask the user for the wedding_date if they haven't given one — it drives the flight search. Prefer the
+    DD/MM/YYYY format (e.g. 15/06/2027).
     This tool must be called alone, without any other tool calls. It must complete and return to make,
     the information available to other tools."""
     return Command(update={
-        "origin": origin, 
-        "destination": destination, 
-        "guest_count": guest_count, 
-        "genre": genre, 
+        "origin": origin,
+        "destination": destination,
+        "guest_count": guest_count,
+        "genre": genre,
+        "wedding_date": wedding_date,
         "messages": [ToolMessage("Successfully updated state", tool_call_id=runtime.tool_call_id)]}
         )
 
