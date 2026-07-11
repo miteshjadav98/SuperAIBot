@@ -35,7 +35,9 @@ def search_movies(query: str) -> Dict[str, Any]:
         return {"error": str(exc)}
 
 
-system_prompt = """
+from core.prompts import get_prompt
+
+_DEFAULT_SYSTEM_PROMPT = """
 You are a film buff who recommends movies.
 
 Given the user's taste — favourite genres, a film or director they liked, or a
@@ -44,6 +46,12 @@ return a shortlist of 3-5 movies. For each: the title, year, and a single line
 on why it fits their taste. Prefer variety over near-duplicates, and mention
 where to watch if the search surfaces it.
 """
+
+system_prompt = get_prompt(
+    "movie_recommender_system",
+    _DEFAULT_SYSTEM_PROMPT,
+    name="Movie Recommender — System Prompt",
+)
 
 agent = create_agent(
     model=model,

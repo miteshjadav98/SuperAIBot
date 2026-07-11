@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import List
 from dotenv import load_dotenv
 
@@ -116,6 +117,11 @@ _ensure_text_index()
 _memory_docs: List[Document] = []
 _bm25_retriever = None
 
+# Serializes writes to the shared in-memory store + BM25 index. /upload now runs
+# add_documents_to_store in a worker thread, so parallel uploads can call it at
+# the same time (Atlas writes are already thread-safe via pymongo).
+_store_lock = threading.Lock()
+
 
 def _rebuild_bm25() -> None:
     global _bm25_retriever
@@ -231,10 +237,14 @@ def add_documents_to_store(docs: List[Document], wait_for_index: bool = False):
     if docs:
         _ensure_vector_index()
         _ensure_text_index()
-        vector_store.add_documents(documents=docs)
         if isinstance(vector_store, InMemoryVectorStore):
-            _memory_docs.extend(docs)
-            _rebuild_bm25()
+            # In-memory store and BM25 index are process-shared mutable state.
+            with _store_lock:
+                vector_store.add_documents(documents=docs)
+                _memory_docs.extend(docs)
+                _rebuild_bm25()
+        else:
+            vector_store.add_documents(documents=docs)
         if wait_for_index:
             return _wait_until_searchable(docs)
     return True
@@ -256,12 +266,20 @@ def ask_pdf_knowledge_base(query: str) -> str:
     except Exception as e:
         return f"Error querying knowledge base: {str(e)}"
 
-system_prompt = """
+from core.prompts import get_prompt
+
+_DEFAULT_SYSTEM_PROMPT = """
 You are a helpful PDF Chatbot agent.
 You can answer user questions based on the uploaded PDF documents.
 Always use the `ask_pdf_knowledge_base` tool to search for information before answering questions related to the documents.
 If the tool does not provide the answer, you can let the user know that the information is not present in the provided documents.
 """
+
+system_prompt = get_prompt(
+    "pdf_chatbot_system",
+    _DEFAULT_SYSTEM_PROMPT,
+    name="PDF Chatbot — System Prompt",
+)
 
 from langchain.agents import create_agent
 

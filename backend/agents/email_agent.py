@@ -81,8 +81,18 @@ async def dynamic_tool_call(
     return await handler(request)
 
 
-authenticated_prompt = "You are a helpful assistant that can check the inbox and send emails."
-unauthenticated_prompt = "You are a helpful assistant that can authenticate users."
+from core.prompts import get_prompt
+
+authenticated_prompt = get_prompt(
+    "email_authenticated_system",
+    "You are a helpful assistant that can check the inbox and send emails.",
+    name="Email Agent — Authenticated Prompt",
+)
+unauthenticated_prompt = get_prompt(
+    "email_unauthenticated_system",
+    "You are a helpful assistant that can authenticate users.",
+    name="Email Agent — Unauthenticated Prompt",
+)
 
 
 @dynamic_prompt

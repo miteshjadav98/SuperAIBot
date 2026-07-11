@@ -19,7 +19,9 @@ def web_search(query: str) -> Dict[str, Any]:
 
     return tavily_client.search(query)
 
-system_prompt = """
+from core.prompts import get_prompt
+
+_DEFAULT_SYSTEM_PROMPT = """
 
 You are a personal chef. The user will give you a list of ingredients they have left over in their house.
 
@@ -28,6 +30,12 @@ Using the web search tool, search the web for recipes that can be made with the 
 Return recipe suggestions and eventually the recipe instructions to the user, if requested.
 
 """
+
+system_prompt = get_prompt(
+    "personal_chef_system",
+    _DEFAULT_SYSTEM_PROMPT,
+    name="Personal Chef — System Prompt",
+)
 
 from langchain.agents import create_agent
 

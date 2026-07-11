@@ -8,6 +8,7 @@ the LangGraph dev server (:2024); this gateway is for control + simple calls.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -216,24 +217,24 @@ class AskRequest(BaseModel):
     thread_id: str = "default_thread"
 
 
-@app.post("/upload")
-async def upload_pdf(
-    file: UploadFile = File(...), user: dict = Depends(get_current_user)
-):
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
-
+def _ingest_pdf_sync(data: bytes, filename: str) -> dict:
+    """Parse + embed a PDF. This is deliberately synchronous and blocking
+    (MarkItDown, per-image vision calls, embeddings, and a poll until Atlas
+    Vector Search can see the new chunks). ``upload_pdf`` runs it in a worker
+    thread so concurrent uploads run in parallel instead of serializing on the
+    event loop — the frontend uploads multiple PDFs at once, and without this a
+    slow upload blocks the others until they trip the proxy read timeout."""
     from agents.pdf_chatbot import add_documents_to_store
     from core.pdf_ingest import pdf_to_documents
 
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            tmp_file.write(await file.read())
+            tmp_file.write(data)
             tmp_path = tmp_file.name
 
         # MarkItDown text chunks + vision descriptions of embedded images.
-        docs = pdf_to_documents(tmp_path, source=file.filename)
+        docs = pdf_to_documents(tmp_path, source=filename)
         image_docs = sum(
             1 for d in docs if d.metadata.get("kind") == "image_description"
         )
@@ -242,16 +243,28 @@ async def upload_pdf(
         # so the caller can rely on RAG retrieval as soon as this returns.
         searchable = add_documents_to_store(docs, wait_for_index=True)
         return {
-            "message": f"Successfully uploaded and processed {file.filename}",
+            "message": f"Successfully uploaded and processed {filename}",
             "chunks": len(docs),
             "images_described": image_docs,
             "searchable": searchable,
         }
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc))
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+@app.post("/upload")
+async def upload_pdf(
+    file: UploadFile = File(...), user: dict = Depends(get_current_user)
+):
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    data = await file.read()
+    try:
+        return await asyncio.to_thread(_ingest_pdf_sync, data, file.filename)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/ask")
