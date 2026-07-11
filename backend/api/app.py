@@ -19,9 +19,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 from core import db
 from core.base_agent import BaseAgent
 from core.registry import registry
@@ -227,6 +224,7 @@ async def upload_pdf(
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     from agents.pdf_chatbot import add_documents_to_store
+    from core.pdf_ingest import pdf_to_documents
 
     tmp_path = None
     try:
@@ -234,18 +232,19 @@ async def upload_pdf(
             tmp_file.write(await file.read())
             tmp_path = tmp_file.name
 
-        loader = PyPDFLoader(tmp_path)
-        documents = loader.load()
-        splits = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=200, add_start_index=True
-        ).split_documents(documents)
+        # MarkItDown text chunks + vision descriptions of embedded images.
+        docs = pdf_to_documents(tmp_path, source=file.filename)
+        image_docs = sum(
+            1 for d in docs if d.metadata.get("kind") == "image_description"
+        )
 
         # Block until the chunks are actually queryable by Atlas Vector Search,
         # so the caller can rely on RAG retrieval as soon as this returns.
-        searchable = add_documents_to_store(splits, wait_for_index=True)
+        searchable = add_documents_to_store(docs, wait_for_index=True)
         return {
             "message": f"Successfully uploaded and processed {file.filename}",
-            "chunks": len(splits),
+            "chunks": len(docs),
+            "images_described": image_docs,
             "searchable": searchable,
         }
     except Exception as exc:  # noqa: BLE001

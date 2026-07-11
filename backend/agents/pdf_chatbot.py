@@ -29,9 +29,16 @@ embeddings = AzureOpenAIEmbeddings(
 )
 
 VECTOR_INDEX_NAME = "pdf_vector_index"
+TEXT_INDEX_NAME = "pdf_text_index"
 EMBEDDING_DIMS = 1536  # text-embedding-3-small
 
+# Hybrid retrieval: pull a wide candidate set from both searchers, then let the
+# reranker cut it down to what actually goes into the model's context.
+CANDIDATE_K = 10
+FINAL_K = 4
+
 _index_ready = False
+_text_index_ready = False
 
 
 def _ensure_vector_index() -> None:
@@ -52,6 +59,33 @@ def _ensure_vector_index() -> None:
         _index_ready = True
     except Exception as exc:  # noqa: BLE001 — retry on next use
         print(f"[pdf_chatbot] vector index not ready yet: {exc}")
+
+
+def _ensure_text_index() -> None:
+    """Create the Atlas full-text ($search) index used by hybrid retrieval.
+    Same retry-on-every-use pattern as `_ensure_vector_index`. The index covers
+    the `text` field because that's MongoDBAtlasVectorSearch's default
+    text_key for chunk content."""
+    global _text_index_ready
+    if _text_index_ready or isinstance(vector_store, InMemoryVectorStore):
+        return
+    from core import db
+
+    try:
+        collection = db.pdf_chunks_collection()
+        existing = [idx["name"] for idx in collection.list_search_indexes()]
+        if TEXT_INDEX_NAME not in existing:
+            from langchain_mongodb.index import create_fulltext_search_index
+
+            create_fulltext_search_index(
+                collection=collection,
+                index_name=TEXT_INDEX_NAME,
+                field="text",
+            )
+            print(f"[pdf_chatbot] created Atlas full-text index '{TEXT_INDEX_NAME}'")
+        _text_index_ready = True
+    except Exception as exc:  # noqa: BLE001 — retry on next use
+        print(f"[pdf_chatbot] full-text index not ready yet: {exc}")
 
 
 def _build_vector_store():
@@ -75,6 +109,91 @@ def _build_vector_store():
 
 vector_store = _build_vector_store()
 _ensure_vector_index()
+_ensure_text_index()
+
+# In-memory mode has no Atlas $search, so hybrid retrieval needs its own
+# keyword side: a BM25 retriever rebuilt whenever documents are added.
+_memory_docs: List[Document] = []
+_bm25_retriever = None
+
+
+def _rebuild_bm25() -> None:
+    global _bm25_retriever
+    if not _memory_docs:
+        return
+    try:
+        from langchain_community.retrievers import BM25Retriever
+
+        _bm25_retriever = BM25Retriever.from_documents(_memory_docs, k=CANDIDATE_K)
+    except Exception as exc:  # noqa: BLE001 — vector-only retrieval still works
+        print(f"[pdf_chatbot] BM25 unavailable, keyword search disabled: {exc}")
+
+
+def _rrf_fuse(result_lists: List[List[Document]], rrf_k: int = 60) -> List[Document]:
+    """Reciprocal rank fusion — same scheme Atlas hybrid search uses server-side,
+    applied client-side for the in-memory store."""
+    scores: dict = {}
+    docs_by_key: dict = {}
+    for results in result_lists:
+        for rank, doc in enumerate(results):
+            key = doc.page_content
+            docs_by_key[key] = doc
+            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
+    ordered = sorted(scores, key=scores.get, reverse=True)
+    return [docs_by_key[key] for key in ordered]
+
+
+def _hybrid_retrieve(query: str) -> List[Document]:
+    """Vector + keyword candidates fused by RRF. Atlas does the fusion in one
+    aggregation via MongoDBAtlasHybridSearchRetriever; in-memory fuses vector
+    similarity with BM25 locally. Falls back to pure vector search whenever the
+    keyword side isn't available yet."""
+    if isinstance(vector_store, InMemoryVectorStore):
+        vector_hits = vector_store.similarity_search(query, k=CANDIDATE_K)
+        keyword_hits = _bm25_retriever.invoke(query) if _bm25_retriever else []
+        if not keyword_hits:
+            return vector_hits
+        return _rrf_fuse([vector_hits, keyword_hits])
+
+    _ensure_text_index()
+    if _text_index_ready:
+        try:
+            from langchain_mongodb.retrievers import MongoDBAtlasHybridSearchRetriever
+
+            retriever = MongoDBAtlasHybridSearchRetriever(
+                vectorstore=vector_store,
+                search_index_name=TEXT_INDEX_NAME,
+                k=CANDIDATE_K,
+            )
+            return retriever.invoke(query)
+        except Exception as exc:  # noqa: BLE001 — degrade to vector-only
+            print(f"[pdf_chatbot] hybrid search failed, using vector-only: {exc}")
+    return vector_store.similarity_search(query, k=CANDIDATE_K)
+
+
+_reranker = None
+
+
+def _rerank(query: str, docs: List[Document], top_n: int = FINAL_K) -> List[Document]:
+    """Cross-encoder precision pass over the fused candidates (FlashRank runs a
+    small local ONNX model; first use downloads it to the temp dir). If the
+    model can't load, keep the fused RRF order instead of failing retrieval."""
+    global _reranker
+    if len(docs) <= top_n:
+        return docs
+    try:
+        from flashrank import Ranker, RerankRequest
+
+        if _reranker is None:
+            import tempfile
+
+            _reranker = Ranker(cache_dir=os.path.join(tempfile.gettempdir(), "flashrank"))
+        passages = [{"id": i, "text": doc.page_content} for i, doc in enumerate(docs)]
+        ranked = _reranker.rerank(RerankRequest(query=query, passages=passages))
+        return [docs[item["id"]] for item in ranked[:top_n]]
+    except Exception as exc:  # noqa: BLE001 — fused order is already ranked
+        print(f"[pdf_chatbot] reranker unavailable, keeping fused order: {exc}")
+        return docs[:top_n]
 
 def _wait_until_searchable(docs: List[Document], timeout: float = 45.0) -> bool:
     """Block until the just-added docs are queryable by Atlas Vector Search.
@@ -111,7 +230,11 @@ def add_documents_to_store(docs: List[Document], wait_for_index: bool = False):
     retrieval immediately after this returns."""
     if docs:
         _ensure_vector_index()
+        _ensure_text_index()
         vector_store.add_documents(documents=docs)
+        if isinstance(vector_store, InMemoryVectorStore):
+            _memory_docs.extend(docs)
+            _rebuild_bm25()
         if wait_for_index:
             return _wait_until_searchable(docs)
     return True
@@ -120,13 +243,14 @@ def add_documents_to_store(docs: List[Document], wait_for_index: bool = False):
 def ask_pdf_knowledge_base(query: str) -> str:
     """Ask a question to the PDF knowledge base to retrieve answers from the uploaded documents."""
     try:
-        # Search for relevant documents
+        # Hybrid retrieval (vector + keyword, RRF-fused), then rerank the
+        # candidates down to the chunks that actually enter the context.
         _ensure_vector_index()
-        results = vector_store.similarity_search(query, k=3)
-        if not results:
+        candidates = _hybrid_retrieve(query)
+        if not candidates:
             return "No relevant information found in the uploaded documents."
-        
-        # Combine the content of the retrieved documents
+
+        results = _rerank(query, candidates)
         combined_content = "\n\n---\n\n".join([doc.page_content for doc in results])
         return combined_content
     except Exception as e:

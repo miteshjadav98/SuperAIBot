@@ -32,10 +32,18 @@ uvicorn
 pypdf
 python-multipart
 
+# PDF ingestion: Markdown conversion + embedded-image descriptions (vision)
+markitdown[pdf]
+pymupdf
+
 # MongoDB Atlas: users (auth), PDF vector search, gateway chat memory
 pymongo
 langchain-mongodb
 langgraph-checkpoint-mongodb
+
+# PDF chatbot hybrid retrieval + reranking
+rank_bm25   # BM25 keyword side of hybrid search (in-memory fallback store)
+flashrank   # local cross-encoder reranker (small ONNX model, no API key)
 
 # Auth
 bcrypt
