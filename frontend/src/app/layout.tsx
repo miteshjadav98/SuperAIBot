@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Inter } from "next/font/google";
 import React from "react";
@@ -14,6 +14,13 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "SuperBot",
   description: "SuperBot — your all-in-one AI assistant",
+};
+
+// Ensure mobile browsers render at device width (and still allow pinch-zoom
+// for accessibility) instead of the default desktop viewport.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

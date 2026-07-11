@@ -343,13 +343,13 @@ export function Thread() {
                     width={32}
                     height={32}
                   />
-                  <span className="text-xl font-semibold tracking-tight">
+                  <span className="hidden text-xl font-semibold tracking-tight sm:inline">
                     SuperBot
                   </span>
                 </button>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 sm:gap-4">
                 <AgentSwitcher />
                 <ThemeToggle />
                 <TooltipIconButton
@@ -461,7 +461,7 @@ export function Thread() {
                         className="field-sizing-content resize-none border-none bg-transparent p-3.5 pb-0 shadow-none ring-0 outline-none focus:ring-0 focus:outline-none"
                       />
 
-                      <div className="flex items-center gap-6 p-2 pt-4">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-2 pt-4 sm:gap-6">
                         <div>
                           <div className="flex items-center space-x-2">
                             <Switch
@@ -482,8 +482,11 @@ export function Thread() {
                           className="flex cursor-pointer items-center gap-2"
                         >
                           <Plus className="size-5 text-muted-foreground" />
-                          <span className="text-sm text-muted-foreground">
+                          <span className="hidden text-sm text-muted-foreground sm:inline">
                             Upload PDF or Image
+                          </span>
+                          <span className="text-sm text-muted-foreground sm:hidden">
+                            Attach
                           </span>
                         </Label>
                         <input

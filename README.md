@@ -23,7 +23,7 @@ Each agent doubles as a worked example of an agent-engineering concept:
 | 🍳 **Personal Chef** | Suggests recipes from your leftover ingredients (web search via Tavily). |
 | ✉️ **Email Agent** | Authenticates, reads an inbox, and sends email — with **human-in-the-loop approval** before anything is sent. |
 | 💍 **Wedding Planner** | Multi-agent coordinator: flights (remote MCP), venues (web search), and a playlist (SQL over `Chinook.db`). |
-| 📄 **PDF Chatbot** | RAG over PDFs — **attach a PDF in the chat** (or `POST /upload`) and ask about it. MongoDB Atlas Vector Search-backed. |
+| 📄 **PDF Chatbot** | RAG over PDFs — **attach a PDF in the chat** (or `POST /upload`) and ask about it. MongoDB Atlas Vector Search-backed, with **per-user document isolation** (you only ever retrieve your own uploads). |
 | 🎬 **Movie Recommender** | Suggests films from your taste (web search). The reference example for adding an agent. |
 
 **This project is fully self-contained** — its own `.env`, agent code, database,
@@ -45,7 +45,9 @@ backend/
 ├─ core/
 │  ├─ settings.py     # one pydantic-settings singleton (reads ../.env)
 │  ├─ base_agent.py   # BaseAgent contract + AgentManifest
-│  └─ registry.py     # AgentRegistry — the source of truth for which agents exist
+│  ├─ registry.py     # AgentRegistry — the source of truth for which agents exist
+│  ├─ lg_auth.py      # LangGraph JWT auth — isolates chats & PDFs per user
+│  └─ prompts.py      # loads agent prompts from Mongo (versioned; see Prompt management)
 ├─ llm/
 │  └─ factory.py      # get_chat_model(provider) — Azure default; openai/anthropic/gemini/ollama
 ├─ agents/            # each file exposes `agent` (compiled graph) + MANIFEST
@@ -143,12 +145,18 @@ The 💍 Wedding Planner uses this for its `travel` flight tools. Combine with t
 
 ## PDF uploads
 
-Attach a PDF in the chat (paperclip or drag-drop) and ask about it — a `before_agent`
-middleware in [`pdf_chatbot.py`](backend/agents/pdf_chatbot.py) chunks + embeds it into
-the knowledge base **in the same process as the chat**, then strips the raw file from the
-message before the model runs. The REST route `POST :8000/upload` is also available for
-batch/API ingestion. (Both feed the same retrieval tool; the in-message path is what makes
-the UI upload button "just work" for RAG.)
+Attach one or more PDFs in the chat (paperclip or drag-drop) and ask about them.
+Each upload goes to `POST :8000/upload`, where [`core/pdf_ingest.py`](backend/core/pdf_ingest.py)
+converts the text with **MarkItDown** and describes embedded images with a vision
+model, then the chunks are embedded into Atlas Vector Search. Uploads run in a
+worker thread, so **attaching several PDFs at once processes them in parallel**
+instead of serializing (and timing out).
+
+**Per-user isolation:** every chunk is stamped with the uploader's id (`owner`),
+and the `ask_pdf_knowledge_base` tool filters retrieval to the calling user — so
+one user can never retrieve another user's documents. Isolation is enforced by a
+mandatory post-retrieval owner filter (a leak can't happen even if the Atlas
+pre-filter is momentarily unavailable while its index rebuilds).
 
 ## Authentication & MongoDB Atlas
 
@@ -156,14 +164,16 @@ Users register/sign in with **email + password** (phone is an optional profile
 field). The FastAPI gateway issues a JWT (`/auth/register`, `/auth/login`,
 `/auth/me`); the LangGraph server validates the same JWT on every request via
 custom auth ([`backend/core/lg_auth.py`](backend/core/lg_auth.py)) and stamps +
-filters threads by `metadata.owner` — **each user only sees their own chats**.
+filters threads by `metadata.owner`. The PDF Chatbot applies the same ownership
+model to uploaded documents, so **users never see each other's chats or PDFs**.
 
-MongoDB Atlas backs three things (all in one cluster/db, `MONGODB_DB`):
+MongoDB Atlas backs several things (all in one cluster/db, `MONGODB_DB`):
 
 | Collection | Used for |
 | --- | --- |
 | `users` | accounts (email, bcrypt password hash, optional phone) |
-| `pdf_chunks` | Atlas **Vector Search** index for PDF RAG — uploads survive restarts |
+| `pdf_chunks` | Atlas **Vector Search** for PDF RAG — chunks stamped with `owner`, retrieval filtered so each user only queries their own PDFs |
+| `prompts` / `prompt_registry` / `prompt_audit` | versioned agent prompts (see [Prompt management](#prompt-management)) |
 | `checkpoints*` | gateway (`/chat`, `/ask`) conversation memory per user |
 
 **Atlas setup (one time):**
@@ -179,6 +189,26 @@ MongoDB Atlas backs three things (all in one cluster/db, `MONGODB_DB`):
 Without `MONGODB_URI` the platform still boots: PDF RAG falls back to an
 in-memory store and `/auth/*` returns 503 — but login (and therefore the chat
 UI) needs it, so set it first.
+
+## Prompt management
+
+Agent prompts (the system prompt for every agent and sub-agent) are **not
+hardcoded** — they're stored and versioned in MongoDB and loaded at build time
+by [`backend/core/prompts.py`](backend/core/prompts.py). The first time an agent
+runs, its prompt is auto-seeded as version 1 from the in-code default, so it
+shows up ready to edit; if Mongo is unreachable the agent falls back to that
+default and keeps working.
+
+A standalone FastAPI service, [`prompt_service/`](prompt_service/), is the
+management API over those prompts — create, list versions, publish a new
+(immutable) version, and roll back — with Swagger UI at `/docs`. It reads and
+writes the same `prompts` / `prompt_registry` collections the agents use, so
+**the backend and `prompt_service` must point at the same `MONGODB_DB`**. See
+[`prompt_service/README.md`](prompt_service/README.md) for the endpoints and
+examples.
+
+Editing a prompt takes effect after the agent process restarts (prompts are read
+when each graph is built).
 
 ## Prerequisites
 
@@ -251,6 +281,8 @@ Stop a server with **Ctrl+C** in its window. LangSmith tracing is on (via
   venue and playlist tools work independently.
 - Switching agents in the dropdown intentionally **starts a fresh conversation** —
   each agent has a different state shape.
+- The chat UI is **responsive**: on mobile the chat-history sidebar collapses to a
+  slide-in drawer, and the header and message composer adapt so nothing overflows.
 - **Super Bot routing** picks one agent per message from `MANIFEST.description`. Routing
   the Email Agent through Super Bot returns its final reply; to exercise the send-approval
   human-in-the-loop, select the Email Agent directly.
