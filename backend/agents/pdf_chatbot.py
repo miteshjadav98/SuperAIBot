@@ -9,6 +9,7 @@ from langchain.tools import tool
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_core.documents import Document
+from langchain_core.runnables import RunnableConfig
 
 AZURE_DEPLOYMENT  = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1")
 AZURE_ENDPOINT    = os.environ.get("AZURE_OPENAI_ENDPOINT")
@@ -55,11 +56,46 @@ def _ensure_vector_index() -> None:
         collection = db.pdf_chunks_collection()
         existing = [idx["name"] for idx in collection.list_search_indexes()]
         if VECTOR_INDEX_NAME not in existing:
-            vector_store.create_vector_search_index(dimensions=EMBEDDING_DIMS)
+            # `owner` is indexed as a filter field so retrieval can pre_filter by
+            # the uploading user for per-user isolation (see _hybrid_retrieve).
+            vector_store.create_vector_search_index(
+                dimensions=EMBEDDING_DIMS, filters=["owner"]
+            )
             print(f"[pdf_chatbot] created Atlas search index '{VECTOR_INDEX_NAME}'")
+        else:
+            _ensure_owner_filter(collection)
         _index_ready = True
     except Exception as exc:  # noqa: BLE001 — retry on next use
         print(f"[pdf_chatbot] vector index not ready yet: {exc}")
+
+
+def _ensure_owner_filter(collection) -> None:
+    """Add the `owner` filter field to a vector index created before per-user
+    isolation existed. Best-effort: retrieval also hard-filters by owner after
+    the fact, so isolation holds even when this can't run."""
+    try:
+        idx = next(
+            (i for i in collection.list_search_indexes()
+             if i["name"] == VECTOR_INDEX_NAME),
+            None,
+        )
+        fields = (idx or {}).get("latestDefinition", {}).get("fields", [])
+        if any(f.get("type") == "filter" and f.get("path") == "owner" for f in fields):
+            return
+        # langchain_mongodb has no update helper, so drive the Atlas Search
+        # index update through pymongo directly. Atlas rebuilds it in the
+        # background; retrieval falls back to a post-filter until it's live.
+        new_fields = list(fields) + [{"type": "filter", "path": "owner"}]
+        collection.update_search_index(VECTOR_INDEX_NAME, {"fields": new_fields})
+        print(
+            f"[pdf_chatbot] updating index '{VECTOR_INDEX_NAME}' to add 'owner' "
+            "filter (Atlas rebuilds in the background)"
+        )
+    except Exception as exc:  # noqa: BLE001 — post-filter still enforces isolation
+        print(
+            "[pdf_chatbot] could not add owner filter to vector index "
+            f"(post-filter still enforces isolation): {exc}"
+        )
 
 
 def _ensure_text_index() -> None:
@@ -149,19 +185,35 @@ def _rrf_fuse(result_lists: List[List[Document]], rrf_k: int = 60) -> List[Docum
     return [docs_by_key[key] for key in ordered]
 
 
-def _hybrid_retrieve(query: str) -> List[Document]:
-    """Vector + keyword candidates fused by RRF. Atlas does the fusion in one
-    aggregation via MongoDBAtlasHybridSearchRetriever; in-memory fuses vector
-    similarity with BM25 locally. Falls back to pure vector search whenever the
-    keyword side isn't available yet."""
-    if isinstance(vector_store, InMemoryVectorStore):
-        vector_hits = vector_store.similarity_search(query, k=CANDIDATE_K)
-        keyword_hits = _bm25_retriever.invoke(query) if _bm25_retriever else []
-        if not keyword_hits:
-            return vector_hits
-        return _rrf_fuse([vector_hits, keyword_hits])
+def _only_owner(docs: List[Document], owner: str) -> List[Document]:
+    """Hard guarantee of per-user isolation: drop anything not owned by the
+    caller, no matter what the vector store's pre_filter did or didn't do. The
+    pre_filters in _hybrid_retrieve are an efficiency optimization; THIS is the
+    security backstop, so a leak can't happen even if a pre_filter is missing."""
+    return [d for d in docs if d.metadata.get("owner") == owner]
 
+
+def _hybrid_retrieve(query: str, owner: str) -> List[Document]:
+    """Vector + keyword candidates fused by RRF, scoped to `owner`'s documents.
+    Atlas does the fusion in one aggregation via MongoDBAtlasHybridSearchRetriever;
+    in-memory fuses vector similarity with BM25 locally. Every path ends in
+    _only_owner so no other user's chunks can ever be returned."""
+    if isinstance(vector_store, InMemoryVectorStore):
+        owned = lambda d: d.metadata.get("owner") == owner  # noqa: E731
+        vector_hits = vector_store.similarity_search(query, k=CANDIDATE_K, filter=owned)
+        keyword_hits = _only_owner(
+            _bm25_retriever.invoke(query) if _bm25_retriever else [], owner
+        )
+        if not keyword_hits:
+            return _only_owner(vector_hits, owner)
+        return _only_owner(_rrf_fuse([vector_hits, keyword_hits]), owner)
+
+    pre_filter = {"owner": {"$eq": owner}}
     _ensure_text_index()
+
+    # Preferred: server-side owner filter (hybrid first, then vector-only).
+    # These need `owner` indexed as a filter field; when it is, they return
+    # exactly this user's chunks.
     if _text_index_ready:
         try:
             from langchain_mongodb.retrievers import MongoDBAtlasHybridSearchRetriever
@@ -170,11 +222,28 @@ def _hybrid_retrieve(query: str) -> List[Document]:
                 vectorstore=vector_store,
                 search_index_name=TEXT_INDEX_NAME,
                 k=CANDIDATE_K,
+                pre_filter=pre_filter,
             )
-            return retriever.invoke(query)
-        except Exception as exc:  # noqa: BLE001 — degrade to vector-only
-            print(f"[pdf_chatbot] hybrid search failed, using vector-only: {exc}")
-    return vector_store.similarity_search(query, k=CANDIDATE_K)
+            return _only_owner(retriever.invoke(query), owner)
+        except Exception as exc:  # noqa: BLE001 — try vector pre_filter next
+            print(f"[pdf_chatbot] hybrid search failed, trying vector pre_filter: {exc}")
+    try:
+        return _only_owner(
+            vector_store.similarity_search(query, k=CANDIDATE_K, pre_filter=pre_filter),
+            owner,
+        )
+    except Exception as exc:  # noqa: BLE001 — owner filter not active on index yet
+        print(
+            "[pdf_chatbot] owner pre_filter not active (index may still be "
+            f"building); using enlarged post-filter fallback: {exc}"
+        )
+
+    # Fallback that works even while the filtered index rebuilds: pull a wide
+    # candidate set and drop everything not owned by the caller. Correct (never
+    # leaks), just less efficient — the pre_filter paths replace it once the
+    # index has the `owner` filter.
+    wide = vector_store.similarity_search(query, k=max(CANDIDATE_K * 20, 200))
+    return _only_owner(wide, owner)
 
 
 _reranker = None
@@ -249,14 +318,42 @@ def add_documents_to_store(docs: List[Document], wait_for_index: bool = False):
             return _wait_until_searchable(docs)
     return True
 
+def _owner_from_config(config: RunnableConfig | None) -> str | None:
+    """Resolve the authenticated user id from the run config. Two paths reach
+    this tool and both carry the identity:
+    - the FastAPI gateway (/ask, /chat) sets configurable["owner"] explicitly;
+    - the LangGraph streaming server injects the JWT-verified user as
+      configurable["langgraph_auth_user"] (see core/lg_auth.py).
+    Returns None when no identity is present, so the caller can fail closed."""
+    configurable = config.get("configurable") or {} if isinstance(config, dict) else {}
+
+    owner = configurable.get("owner")
+    if owner:
+        return str(owner)
+
+    user = configurable.get("langgraph_auth_user")
+    if user is not None:
+        ident = getattr(user, "identity", None)
+        if ident is None and isinstance(user, dict):
+            ident = user.get("identity")
+        if ident:
+            return str(ident)
+    return None
+
+
 @tool
-def ask_pdf_knowledge_base(query: str) -> str:
+def ask_pdf_knowledge_base(query: str, config: RunnableConfig) -> str:
     """Ask a question to the PDF knowledge base to retrieve answers from the uploaded documents."""
+    owner = _owner_from_config(config)
+    if not owner:
+        # No authenticated identity on the request → expose nothing. Documents
+        # are private to the user who uploaded them.
+        return "No relevant information found in the uploaded documents."
     try:
-        # Hybrid retrieval (vector + keyword, RRF-fused), then rerank the
-        # candidates down to the chunks that actually enter the context.
+        # Hybrid retrieval (vector + keyword, RRF-fused), scoped to this user's
+        # documents, then rerank the candidates down to what enters the context.
         _ensure_vector_index()
-        candidates = _hybrid_retrieve(query)
+        candidates = _hybrid_retrieve(query, owner)
         if not candidates:
             return "No relevant information found in the uploaded documents."
 

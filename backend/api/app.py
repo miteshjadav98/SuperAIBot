@@ -192,8 +192,14 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
 
     from langchain_core.messages import HumanMessage
 
-    # Namespace threads by user so memory is private per account.
-    config = {"configurable": {"thread_id": f"{user['_id']}:{request.thread_id}"}}
+    # Namespace threads by user so memory is private per account, and pass the
+    # owner so the PDF RAG tool only retrieves this user's documents.
+    config = {
+        "configurable": {
+            "thread_id": f"{user['_id']}:{request.thread_id}",
+            "owner": str(user["_id"]),
+        }
+    }
     try:
         graph = _gateway_graph(agent)
         result = await graph.ainvoke(
@@ -217,13 +223,16 @@ class AskRequest(BaseModel):
     thread_id: str = "default_thread"
 
 
-def _ingest_pdf_sync(data: bytes, filename: str) -> dict:
+def _ingest_pdf_sync(data: bytes, filename: str, owner: str) -> dict:
     """Parse + embed a PDF. This is deliberately synchronous and blocking
     (MarkItDown, per-image vision calls, embeddings, and a poll until Atlas
     Vector Search can see the new chunks). ``upload_pdf`` runs it in a worker
     thread so concurrent uploads run in parallel instead of serializing on the
     event loop — the frontend uploads multiple PDFs at once, and without this a
-    slow upload blocks the others until they trip the proxy read timeout."""
+    slow upload blocks the others until they trip the proxy read timeout.
+
+    Every chunk is stamped with ``owner`` (the uploading user's id) so retrieval
+    can keep each user's documents private to them."""
     from agents.pdf_chatbot import add_documents_to_store
     from core.pdf_ingest import pdf_to_documents
 
@@ -235,6 +244,8 @@ def _ingest_pdf_sync(data: bytes, filename: str) -> dict:
 
         # MarkItDown text chunks + vision descriptions of embedded images.
         docs = pdf_to_documents(tmp_path, source=filename)
+        for doc in docs:
+            doc.metadata["owner"] = owner
         image_docs = sum(
             1 for d in docs if d.metadata.get("kind") == "image_description"
         )
@@ -262,7 +273,9 @@ async def upload_pdf(
 
     data = await file.read()
     try:
-        return await asyncio.to_thread(_ingest_pdf_sync, data, file.filename)
+        return await asyncio.to_thread(
+            _ingest_pdf_sync, data, file.filename, str(user["_id"])
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -277,7 +290,10 @@ async def ask_question(request: AskRequest, user: dict = Depends(get_current_use
 
     try:
         config = {
-            "configurable": {"thread_id": f"{user['_id']}:{request.thread_id}"}
+            "configurable": {
+                "thread_id": f"{user['_id']}:{request.thread_id}",
+                "owner": str(user["_id"]),
+            }
         }
         graph = _gateway_graph(pdf_agent)
         response = await graph.ainvoke(
