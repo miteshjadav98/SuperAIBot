@@ -8,10 +8,12 @@
 #   * uses non-default app ports so it can't collide with AIKhataBook
 #   * NEVER removes the default nginx site or touches AIKhataBook / Redis
 #
-# Architecture (3 processes, only the frontend is public):
+# Architecture (4 processes, only the frontend is public):
 #   1. LangGraph server  (127.0.0.1:2024) - agent graphs + token streaming
 #   2. FastAPI gateway   (127.0.0.1:8010) - control plane / PDF RAG (internal)
 #   3. Next.js frontend  (127.0.0.1:3100) - chat UI, proxied by nginx
+#   4. Prompt service    (127.0.0.1:8020) - versioned prompt management;
+#      Swagger UI exposed at https://$DOMAIN/prompt-api/docs
 #
 # Public URL: https://aibot.miteklabs.tech  ->  nginx  ->  Next.js :3100
 # The browser only ever talks to the Next.js app; its built-in /api route
@@ -26,6 +28,7 @@ set -e
 DOMAIN="aibot.miteklabs.tech"
 LANGGRAPH_PORT=2024
 GATEWAY_PORT=8010          # FastAPI gateway (internal only)
+PROMPTS_PORT=8020          # Prompt management service (Swagger at /prompt-api/docs)
 FRONTEND_PORT=3100         # Next.js (avoid AIKhataBook's likely :3000)
 APP_DIR="$(pwd)"
 SERVICE_PREFIX="aibot"
@@ -73,6 +76,7 @@ echo "==> Creating Python virtual environment (.venv)..."
 python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --upgrade pip
 "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/backend/requirements.txt"
+"$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/prompt_service/requirements.txt"
 
 # ---- 4. Frontend build ----------------------------------------------------
 # NEXT_PUBLIC_* vars are baked in at build time, so the production env file
@@ -138,6 +142,29 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
+# ---- 6b. systemd: Prompt management service --------------------------------
+echo "==> Configuring $SERVICE_PREFIX-prompts service..."
+cat <<EOF | sudo tee /etc/systemd/system/$SERVICE_PREFIX-prompts.service
+[Unit]
+Description=Super AI Bot - Prompt management service
+After=network.target
+
+[Service]
+User=$USER
+WorkingDirectory=$APP_DIR/prompt_service
+Environment="PATH=$APP_DIR/.venv/bin"
+# ROOT_PATH makes Swagger UI work behind the stripped /prompt-api nginx prefix.
+Environment="ROOT_PATH=/prompt-api"
+# Reuses MONGODB_URI/MONGODB_DB from the shared .env. Set PROMPT_API_KEY there
+# to require X-API-Key on all /prompts endpoints (recommended: it's public).
+EnvironmentFile=$APP_DIR/.env
+ExecStart=$APP_DIR/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port $PROMPTS_PORT
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # ---- 7. systemd: Next.js frontend ----------------------------------------
 echo "==> Configuring $SERVICE_PREFIX-frontend service..."
 NODE_BIN_DIR="$(dirname "$(command -v node)")"
@@ -181,6 +208,17 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
+    # Prompt management service. The trailing slash strips the /prompt-api
+    # prefix; the service's ROOT_PATH=/prompt-api puts it back in the OpenAPI
+    # spec, so Swagger UI at /prompt-api/docs works including "Try it out".
+    location /prompt-api/ {
+        proxy_pass http://127.0.0.1:$PROMPTS_PORT/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:$FRONTEND_PORT;
         proxy_set_header Host \$host;
@@ -207,9 +245,10 @@ sudo nginx -t
 # ---- 9. Start services ----------------------------------------------------
 echo "==> Starting services..."
 sudo systemctl daemon-reload
-sudo systemctl enable $SERVICE_PREFIX-langgraph $SERVICE_PREFIX-backend $SERVICE_PREFIX-frontend
+sudo systemctl enable $SERVICE_PREFIX-langgraph $SERVICE_PREFIX-backend $SERVICE_PREFIX-prompts $SERVICE_PREFIX-frontend
 sudo systemctl restart $SERVICE_PREFIX-langgraph
 sudo systemctl restart $SERVICE_PREFIX-backend
+sudo systemctl restart $SERVICE_PREFIX-prompts
 sudo systemctl restart $SERVICE_PREFIX-frontend
 sudo systemctl reload nginx
 
@@ -228,7 +267,12 @@ sudo certbot renew --dry-run
 echo ""
 echo "Deployment complete! Your Super AI Bot should now be live at:"
 echo "    https://$DOMAIN"
+echo "Prompt management Swagger UI (test the API in the browser):"
+echo "    https://$DOMAIN/prompt-api/docs"
 echo ""
+echo "  * To protect the prompt API, add PROMPT_API_KEY=<secret> to .env and"
+echo "    run: sudo systemctl restart $SERVICE_PREFIX-prompts"
+echo "    Then click Authorize in Swagger and paste the key."
 echo "Reminders:"
 echo "  * Point DNS: an A record for $DOMAIN -> this VM's public IP."
 echo "  * Open ports 80 and 443 in the Azure Network Security Group."
