@@ -7,15 +7,15 @@ Each agent module exposes two things:
 * ``MANIFEST`` — an :class:`AgentManifest` describing the agent so the registry,
   the Super Bot router, and the API can reason about it without importing it.
 
-:class:`BaseAgent` is a thin wrapper around a compiled graph that exposes the
-contract from the platform vision (``invoke`` / ``stream`` / ``get_tools`` /
-``get_memory``). It does not re-implement anything LangGraph already provides.
+:class:`BaseAgent` is a thin wrapper around a compiled graph: it exposes the
+graph plus a normalising ``invoke`` (accepting a raw string, a messages list, or
+a full state dict). It does not re-implement anything LangGraph already provides.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Literal
+from typing import Any, Callable, Literal
 
 from langchain_core.messages import HumanMessage
 
@@ -63,20 +63,3 @@ class BaseAgent:
 
     async def invoke(self, query: str | dict | list, config: dict | None = None) -> dict:
         return await self.graph.ainvoke(self._to_state(query), config=config or {})
-
-    async def stream(
-        self, query: str | dict | list, config: dict | None = None
-    ) -> AsyncIterator[Any]:
-        async for chunk in self.graph.astream(self._to_state(query), config=config or {}):
-            yield chunk
-
-    def get_tools(self) -> list:
-        """Best-effort tool list (introspected from the compiled graph)."""
-        try:
-            return list(self.graph.get_graph().nodes)  # node names; cheap + safe
-        except Exception:
-            return []
-
-    def get_memory(self) -> Any | None:
-        """The checkpointer backing this agent's threads, if any."""
-        return getattr(self.graph, "checkpointer", None)

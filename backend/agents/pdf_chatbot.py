@@ -1,34 +1,19 @@
 import os
 import threading
 from typing import List
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from langchain.tools import tool
-from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
 
-AZURE_DEPLOYMENT  = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1")
-AZURE_ENDPOINT    = os.environ.get("AZURE_OPENAI_ENDPOINT")
-AZURE_API_KEY     = os.environ.get("AZURE_OPENAI_API_KEY")
-AZURE_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+from llm.factory import get_chat_model, get_embeddings
 
-azure_model = AzureChatOpenAI(
-    azure_deployment=AZURE_DEPLOYMENT,
-    azure_endpoint=AZURE_ENDPOINT,
-    api_key=AZURE_API_KEY,
-    api_version=AZURE_API_VERSION
-)
-
-embeddings = AzureOpenAIEmbeddings(
-    azure_deployment="text-embedding-3-small", # Usually text-embedding-3-small is used, as per bonus_rag.ipynb
-    azure_endpoint=AZURE_ENDPOINT,
-    api_key=AZURE_API_KEY,
-    api_version=AZURE_API_VERSION
-)
+# Built via the shared LLM factory so this agent reads its Azure config from the
+# one place every other agent does (core/settings.py) — deployment, endpoint,
+# key, api-version, and the embedding model all come from settings.
+azure_model = get_chat_model()
+embeddings = get_embeddings()
 
 VECTOR_INDEX_NAME = "pdf_vector_index"
 TEXT_INDEX_NAME = "pdf_text_index"
