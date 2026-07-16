@@ -89,10 +89,20 @@ function base64ToBlob(base64: string, mimeType: string): Blob {
  * inline base64 block is still sent with the message so the model can also read
  * the file directly on the current turn.
  */
+export interface PdfIngestResult {
+  filename: string;
+  chunks: number;
+  pages: number;
+  textEngine: string;
+  imagesTotal: number;
+  imagesDescribed: number;
+  imageCap: number;
+}
+
 export async function ingestPdfBlock(
   block: ContentBlock.Multimodal.Data,
   token: string | null,
-): Promise<{ filename: string; chunks: number }> {
+): Promise<PdfIngestResult> {
   const meta = (block.metadata ?? {}) as { filename?: string };
   const filename =
     meta.filename ||
@@ -119,7 +129,28 @@ export async function ingestPdfBlock(
         : "PDF ingestion failed",
     );
   }
-  return { filename, chunks: Number((data as { chunks?: number }).chunks ?? 0) };
+  const d = data as Record<string, unknown>;
+  return {
+    filename,
+    chunks: Number(d.chunks ?? 0),
+    pages: Number(d.pages ?? 0),
+    textEngine: String(d.text_engine ?? ""),
+    imagesTotal: Number(d.images_total ?? 0),
+    imagesDescribed: Number(d.images_described ?? 0),
+    imageCap: Number(d.image_cap ?? 0),
+  };
+}
+
+// Read a block's MIME type tolerating both camelCase (`mimeType`, what we set
+// on send) and snake_case (`mime_type`, what often survives the round-trip
+// through the LangGraph server). Missing one of these was why attachments
+// reloaded from chat history rendered as empty/black boxes.
+export function blockMimeType(block: unknown): string | undefined {
+  if (typeof block !== "object" || block === null) return undefined;
+  const b = block as { mimeType?: unknown; mime_type?: unknown };
+  if (typeof b.mimeType === "string") return b.mimeType;
+  if (typeof b.mime_type === "string") return b.mime_type;
+  return undefined;
 }
 
 // Type guard for Base64ContentBlock
@@ -128,23 +159,15 @@ export function isBase64ContentBlock(
 ): block is ContentBlock.Multimodal.Data {
   if (typeof block !== "object" || block === null || !("type" in block))
     return false;
-  // file type (legacy)
-  if (
-    (block as { type: unknown }).type === "file" &&
-    "mimeType" in block &&
-    typeof (block as { mimeType?: unknown }).mimeType === "string" &&
-    ((block as { mimeType: string }).mimeType.startsWith("image/") ||
-      (block as { mimeType: string }).mimeType === "application/pdf")
-  ) {
+  const type = (block as { type: unknown }).type;
+  const mime = blockMimeType(block);
+  if (!mime) return false;
+  // file type (legacy): images or PDFs
+  if (type === "file" && (mime.startsWith("image/") || mime === "application/pdf")) {
     return true;
   }
   // image type (new)
-  if (
-    (block as { type: unknown }).type === "image" &&
-    "mimeType" in block &&
-    typeof (block as { mimeType?: unknown }).mimeType === "string" &&
-    (block as { mimeType: string }).mimeType.startsWith("image/")
-  ) {
+  if (type === "image" && mime.startsWith("image/")) {
     return true;
   }
   return false;

@@ -174,48 +174,89 @@ export function Thread() {
       return;
     setFirstTokenReceived(false);
 
+    const isPdfAgent = assistantId === "pdf_chatbot";
+    const pdfBlocks = contentBlocks.filter(isPdfBlock);
+    // Inline PDFs are NEVER sent to the model: Azure rasterizes a PDF to one
+    // image per page and hard-caps a request at 50 images, so a long PDF used to
+    // crash the run ("Too many images: 51"). The PDF chatbot answers from the
+    // RAG index instead; other agents have no use for a PDF at all. Images/text
+    // attachments still go inline (vision models use them).
+    const inlineBlocks = contentBlocks.filter((b) => !isPdfBlock(b));
+
+    if (pdfBlocks.length > 0 && !isPdfAgent) {
+      toast.info(
+        "PDFs are only used by the PDF Chatbot — switch to that agent to ask about a document. Sending your message without the PDF.",
+      );
+    }
+
+    // Keep the message non-empty when a PDF is attached with no question typed.
+    const pdfNote =
+      isPdfAgent &&
+      pdfBlocks.length > 0 &&
+      input.trim().length === 0 &&
+      inlineBlocks.length === 0
+        ? `Uploaded ${pdfBlocks.length === 1 ? "a PDF" : `${pdfBlocks.length} PDFs`}. Please answer questions from it.`
+        : "";
+    const textToSend = input.trim().length > 0 ? input.trim() : pdfNote;
+
+    if (textToSend.length === 0 && inlineBlocks.length === 0) {
+      // Nothing left to send (e.g. only a PDF attached on a non-PDF agent).
+      setContentBlocks([]);
+      return;
+    }
+
     const newHumanMessage: Message = {
       id: uuidv4(),
       type: "human",
       content: [
-        ...(input.trim().length > 0 ? [{ type: "text", text: input }] : []),
-        ...contentBlocks,
+        ...(textToSend.length > 0 ? [{ type: "text", text: textToSend }] : []),
+        ...inlineBlocks,
       ] as Message["content"],
     };
 
     // For the PDF chatbot, push any attached PDFs through the FastAPI /upload
     // endpoint so they're chunked + embedded into the Atlas vector store, making
-    // them retrievable by the `ask_pdf_knowledge_base` RAG tool (not just
-    // readable inline for this single turn). We await indexing before streaming
-    // the message so the RAG tool can already find the chunks on this first turn.
-    if (assistantId === "pdf_chatbot") {
-      const pdfBlocks = contentBlocks.filter(isPdfBlock);
-      if (pdfBlocks.length > 0) {
-        const label =
-          pdfBlocks.length === 1 ? "PDF" : `${pdfBlocks.length} PDFs`;
-        const toastId = toast.loading(`Indexing ${label} for search…`);
-        try {
-          const results = await Promise.all(
-            pdfBlocks.map((block) => ingestPdfBlock(block, token)),
-          );
-          const totalChunks = results.reduce((sum, r) => sum + r.chunks, 0);
-          toast.success(`Indexed ${label} (${totalChunks} chunks).`, {
-            id: toastId,
-          });
-        } catch (err) {
-          toast.error(`Could not index ${label}.`, {
-            id: toastId,
-            description: (
-              <p>
-                <code>{err instanceof Error ? err.message : String(err)}</code>
-              </p>
-            ),
-          });
-          // Indexing failed — abort (leaving the input + attachment in place)
-          // so the user can retry rather than asking against a knowledge base
-          // that doesn't have the document.
-          return;
+    // them retrievable by the `ask_pdf_knowledge_base` RAG tool. We await
+    // indexing before streaming the message so the tool can already find the
+    // chunks on this first turn.
+    if (isPdfAgent && pdfBlocks.length > 0) {
+      const label = pdfBlocks.length === 1 ? "PDF" : `${pdfBlocks.length} PDFs`;
+      const toastId = toast.loading(`Indexing ${label} for search…`);
+      try {
+        const results = await Promise.all(
+          pdfBlocks.map((block) => ingestPdfBlock(block, token)),
+        );
+        const totalChunks = results.reduce((sum, r) => sum + r.chunks, 0);
+        const imagesTotal = results.reduce((sum, r) => sum + r.imagesTotal, 0);
+        const imagesDescribed = results.reduce(
+          (sum, r) => sum + r.imagesDescribed,
+          0,
+        );
+        const ocrUsed = results.some(
+          (r) => r.textEngine === "document_intelligence",
+        );
+        const cap = results[0]?.imageCap ?? 0;
+
+        let description = `${totalChunks} searchable chunk${totalChunks === 1 ? "" : "s"}${ocrUsed ? " · OCR" : ""}.`;
+        if (imagesTotal > imagesDescribed) {
+          description += ` Described the first ${imagesDescribed} of ${imagesTotal} images (cap ${cap}); all text was still indexed.`;
+        } else if (imagesDescribed > 0) {
+          description += ` Described ${imagesDescribed} image${imagesDescribed === 1 ? "" : "s"}.`;
         }
+        toast.success(`Indexed ${label}.`, { id: toastId, description });
+      } catch (err) {
+        toast.error(`Could not index ${label}.`, {
+          id: toastId,
+          description: (
+            <p>
+              <code>{err instanceof Error ? err.message : String(err)}</code>
+            </p>
+          ),
+        });
+        // Indexing failed — abort (leaving the input + attachment in place)
+        // so the user can retry rather than asking against a knowledge base
+        // that doesn't have the document.
+        return;
       }
     }
 

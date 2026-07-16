@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     google_api_key: Optional[str] = None
     ollama_base_url: str = "http://localhost:11434"
 
+    # Azure AI Document Intelligence (OCR + layout for PDFs; reads scanned pages
+    # MarkItDown can't). Free (F0) tier: 500 pages/month, 20 calls/minute — the
+    # monthly page budget below guards it and ingestion falls back to MarkItDown
+    # when it's unset or exhausted. Leave endpoint/key empty to disable.
+    azure_docintel_endpoint: Optional[str] = None
+    azure_docintel_key: Optional[str] = None
+    azure_docintel_model: str = "prebuilt-layout"
+    azure_docintel_monthly_page_budget: int = 500  # 0 disables the cap
+
     # Tools.
     tavily_api_key: Optional[str] = None
 

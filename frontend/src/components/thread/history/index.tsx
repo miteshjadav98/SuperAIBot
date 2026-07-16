@@ -156,15 +156,20 @@ export default function ThreadHistory() {
         >
           <SheetContent
             side="left"
-            className="flex lg:hidden"
+            className="flex w-[280px] flex-col gap-0 p-0 lg:hidden"
           >
-            <SheetHeader>
+            <SheetHeader className="px-4 pt-4 pb-2">
               <SheetTitle>Chat History</SheetTitle>
             </SheetHeader>
-            <ThreadList
-              threads={threads}
-              onThreadClick={() => setChatHistoryOpen((o) => !o)}
-            />
+            {/* min-h-0 lets the list scroll within the sheet so the footer
+                (with logout) stays pinned and reachable on tall phones. */}
+            <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden px-2">
+              <ThreadList
+                threads={threads}
+                onThreadClick={() => setChatHistoryOpen((o) => !o)}
+              />
+            </div>
+            <AccountFooter />
           </SheetContent>
         </Sheet>
       </div>

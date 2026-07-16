@@ -242,13 +242,12 @@ def _ingest_pdf_sync(data: bytes, filename: str, owner: str) -> dict:
             tmp_file.write(data)
             tmp_path = tmp_file.name
 
-        # MarkItDown text chunks + vision descriptions of embedded images.
-        docs = pdf_to_documents(tmp_path, source=filename)
+        # Text chunks (Document Intelligence OCR / MarkItDown) + vision
+        # descriptions of embedded images. stats reports what happened so the
+        # frontend can tell the user (e.g. "described 25 of 40 images").
+        docs, stats = pdf_to_documents(tmp_path, source=filename)
         for doc in docs:
             doc.metadata["owner"] = owner
-        image_docs = sum(
-            1 for d in docs if d.metadata.get("kind") == "image_description"
-        )
 
         # Block until the chunks are actually queryable by Atlas Vector Search,
         # so the caller can rely on RAG retrieval as soon as this returns.
@@ -256,7 +255,11 @@ def _ingest_pdf_sync(data: bytes, filename: str, owner: str) -> dict:
         return {
             "message": f"Successfully uploaded and processed {filename}",
             "chunks": len(docs),
-            "images_described": image_docs,
+            "pages": stats["pages"],
+            "text_engine": stats["text_engine"],
+            "images_total": stats["images_total"],
+            "images_described": stats["images_described"],
+            "image_cap": stats["image_cap"],
             "searchable": searchable,
         }
     finally:

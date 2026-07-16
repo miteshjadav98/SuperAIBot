@@ -35,6 +35,9 @@ python-multipart
 # PDF ingestion: Markdown conversion + embedded-image descriptions (vision)
 markitdown[pdf]
 pymupdf
+# Azure AI Document Intelligence: OCR + layout for scanned PDFs (optional —
+# ingestion falls back to MarkItDown when AZURE_DOCINTEL_* is unset)
+azure-ai-documentintelligence
 
 # MongoDB Atlas: users (auth), PDF vector search, gateway chat memory
 pymongo
