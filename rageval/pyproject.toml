@@ -65,3 +65,12 @@ strict = true
 files = ["src"]
 # Optional provider/target SDKs are lazy-imported behind extras; don't fail on them.
 ignore_missing_imports = true
+
+# The provider SDKs are lazy-imported inside functions and only used behind their
+# extras. Don't descend into their (or their transitive deps') internals: they aren't
+# part of this package's typed surface, and e.g. openai pulls numpy whose stubs use
+# 3.12-only syntax that would spuriously fail our 3.11 target.
+[[tool.mypy.overrides]]
+module = ["openai.*", "anthropic.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

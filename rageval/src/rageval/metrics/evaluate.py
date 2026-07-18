@@ -12,7 +12,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from statistics import mean
 
+from rageval.core.provider import EmbeddingModel, JudgeModel
 from rageval.core.results import QueryRecord, RunResult
+from rageval.metrics.answer import score_answer_record
 from rageval.metrics.retrieval import (
     hit_rate_at_k,
     ndcg_at_k,
@@ -73,4 +75,58 @@ def format_retrieval_table(aggregate: dict[str, float], ks: Sequence[int] = DEFA
     for m in metrics:
         row = m.ljust(11) + "".join(f"{aggregate.get(f'{m}@{k}', 0.0):8.3f}" for k in ks)
         lines.append(row)
+    return "\n".join(lines)
+
+
+# Display order: judge tier first (headline quality), then embedding, then lexical floor.
+_ANSWER_METRIC_ORDER = (
+    "faithfulness",
+    "answer_relevance",
+    "context_precision",
+    "context_recall",
+    "semantic_similarity",
+    "token_f1",
+    "rouge_l",
+)
+
+
+def score_answers(
+    run: RunResult,
+    *,
+    judge: JudgeModel | None = None,
+    embedder: EmbeddingModel | None = None,
+) -> dict[str, float]:
+    """Score answer metrics on every record and set ``run.answer_aggregate`` to the means.
+
+    Each metric is averaged only over the records that actually produced it: the lexical
+    floor runs whenever a ``reference_answer`` exists, the embedding and judge tiers only
+    when their provider was supplied and the record's inputs allow. So a per-metric sample
+    can be smaller than the record count, and a skipped metric never counts as a zero —
+    the aggregate reports the mean of real observations, not a diluted average.
+    """
+    per_record = [
+        score_answer_record(r, judge=judge, embedder=embedder) for r in run.records
+    ]
+    sums: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for scores in per_record:
+        for name, value in scores.items():
+            sums[name] = sums.get(name, 0.0) + value
+            counts[name] = counts.get(name, 0) + 1
+    aggregate = {name: sums[name] / counts[name] for name in sums}
+    run.answer_aggregate = aggregate
+    return aggregate
+
+
+def format_answer_table(aggregate: dict[str, float]) -> str:
+    """Render the run-mean answer metrics as a two-column table (metric → mean score)."""
+    if not aggregate:
+        return "(no answer metrics — no reference answers and no judge/embedder available)"
+    # Known metrics in a stable order, then any unexpected ones appended alphabetically.
+    ordered = [m for m in _ANSWER_METRIC_ORDER if m in aggregate]
+    ordered += sorted(m for m in aggregate if m not in _ANSWER_METRIC_ORDER)
+    header = "answer metric".ljust(20) + "score".rjust(8)
+    lines = [header, "-" * len(header)]
+    for m in ordered:
+        lines.append(m.ljust(20) + f"{aggregate[m]:8.3f}")
     return "\n".join(lines)

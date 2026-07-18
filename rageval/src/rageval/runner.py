@@ -59,12 +59,20 @@ def run(
     golden_path: Path | str | None = None,
     run_id: str | None = None,
     context: dict[str, Any] | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> RunResult:
     """Evaluate ``target`` over ``golden`` and persist the run.
 
     ``golden`` may carry labels or just questions (``relevant_doc_ids``/``reference_answer``
     optional) — the tier is detected from what's present. Returns the ``RunResult``; also
     writes ``result.json`` + ``manifest.json`` when a store is provided.
+
+    ``provider``/``model``/``extra`` are provenance the caller records into the manifest —
+    e.g. the judge model and its prompt versions — so a scored run remains reproducible.
+    The runner itself stays metric-agnostic: it records this provenance but computes no
+    metrics (those read the stored ``RunResult`` afterward).
     """
     store = store or ResultsStore()
     run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
@@ -97,6 +105,9 @@ def run(
         target_name=target.name,
         config=config,
         golden_path=golden_path,
+        provider=provider,
+        model=model,
+        extra=extra,
     )
     store.save(run_result, manifest)
     return run_result

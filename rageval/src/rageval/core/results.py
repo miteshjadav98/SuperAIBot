@@ -88,6 +88,10 @@ class RunResult:
     # Run-mean retrieval metrics over labelled records; populated by metrics.score_run
     # (M2). Empty when the run has no golden labels (answer-only / unlabelled tiers).
     retrieval_aggregate: dict[str, float] = field(default_factory=dict)
+    # Run-mean answer metrics; populated by metrics.score_answers (M4). Each metric is
+    # averaged only over records that actually produced it, so a judge outage or a missing
+    # reference answer shrinks a metric's sample rather than dragging its mean toward zero.
+    answer_aggregate: dict[str, float] = field(default_factory=dict)
 
     # --- operational rollups (always available, no labels/judge needed) ---
     @property
@@ -123,5 +127,6 @@ class RunResult:
             "tier": self.tier,
             "operational": self.operational(),
             "retrieval_aggregate": self.retrieval_aggregate,
+            "answer_aggregate": self.answer_aggregate,
             "records": [r.to_dict() for r in self.records],
         }
