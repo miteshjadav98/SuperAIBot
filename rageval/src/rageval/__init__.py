@@ -8,6 +8,6 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
-from rageval.core.adapter import RAGResult, RAGTarget, RetrievedChunk
+from rageval.core.adapter import RAGResult, RAGTarget, RetrievableTarget, RetrievedChunk
 
-__all__ = ["RAGResult", "RAGTarget", "RetrievedChunk", "__version__"]
+__all__ = ["RAGResult", "RAGTarget", "RetrievableTarget", "RetrievedChunk", "__version__"]

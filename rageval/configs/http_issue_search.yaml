@@ -1,0 +1,21 @@
+# HTTP adapter — an "issue search" API returning {results:[{key,title,body}]}.
+# Retrieval-only style: there's no single "answer", so we map only chunks. With golden
+# `relevant_doc_ids` matching the issue keys, this yields pure retrieval metrics
+# (Recall/Precision/MRR/NDCG/HitRate) — proving the harness handles a search endpoint,
+# not just a chat one, through the same config surface.
+target:
+  name: issue-search
+  adapter: http
+  golden: data/golden/issues.jsonl
+  http:
+    url: http://localhost:9000/search
+    method: GET
+    params:
+      q: "{question}"
+      top: "10"
+    timeout_s: 30
+    response:
+      # answer intentionally unmapped (retrieval-only)
+      chunks: "$.results[*]"
+      chunk_id: "$.key"          # issue key doubles as the retrievable doc id
+      chunk_text: "$.body"

@@ -1,4 +1,4 @@
-"""``rageval`` CLI. M2 runs the Mock target end-to-end and scores retrieval.
+"""``rageval`` CLI. M3 runs any configured target (mock or HTTP) and scores retrieval.
 
 The full command surface (``compare``, ``baseline``, ``report``, ``dashboard``,
 ``golden``) arrives in later milestones; declaring the entrypoint now keeps the package
@@ -8,10 +8,13 @@ The full command surface (``compare``, ``baseline``, ``report``, ``dashboard``,
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import typer
 
 from rageval.adapters.mock import MockAdapter
+from rageval.config import build_target, load_target_config
+from rageval.core.adapter import RAGTarget
 from rageval.core.store import ResultsStore
 from rageval.datasets.golden import GoldenRecord, load_golden
 from rageval.metrics import format_retrieval_table, score_run
@@ -49,19 +52,37 @@ def version() -> None:
 @app.command()
 def run(
     golden: Path = typer.Option(..., "--golden", help="Path to a golden JSONL file."),
+    target: Path | None = typer.Option(
+        None, "--target", help="Target config YAML. Omit to use the keyless MockAdapter."
+    ),
     runs_dir: Path = typer.Option(Path("runs"), "--runs-dir", help="Where to write runs."),
-    name: str = typer.Option("mock", "--name", help="Target name (M2: MockAdapter only)."),
-    k: int = typer.Option(5, "--k", help="How many chunks the mock retrieves per query."),
+    k: int = typer.Option(5, "--k", help="Chunks the MockAdapter retrieves (mock only)."),
 ) -> None:
-    """Run an evaluation and score retrieval. M2 supports MockAdapter, so it needs no keys."""
+    """Run an evaluation and score retrieval.
+
+    With no ``--target`` the offline MockAdapter runs (zero keys). With ``--target`` any
+    configured adapter runs — e.g. the universal HTTP adapter against a live ``/ask`` or
+    bare ``/chat`` API. The evaluation *tier* is detected from what the target returns.
+    """
     records = load_golden(golden)
     store = ResultsStore(runs_dir)
+
+    rag_target: RAGTarget
+    config_fingerprint: dict[str, Any]
+    if target is None:
+        rag_target = MockAdapter(corpus=_mock_corpus(records), k=k)
+        config_fingerprint = {"adapter": "mock", "k": k}
+    else:
+        cfg = load_target_config(target)
+        rag_target = build_target(cfg)
+        config_fingerprint = cfg.config_fingerprint()
+
     result = run_eval(
-        MockAdapter(name=name, corpus=_mock_corpus(records), k=k),
+        rag_target,
         records,
         store=store,
         golden_path=golden,
-        config={"target": name, "adapter": "mock", "k": k},
+        config=config_fingerprint,
     )
 
     # Score retrieval on labelled records and re-persist (manifest stays fixed at run time).
@@ -69,10 +90,10 @@ def run(
     store.save_result(result)
 
     op = result.operational()
-    typer.echo(f"run_id={result.run_id} tier={result.tier} queries={op['queries']}")
+    typer.echo(f"run_id={result.run_id} target={result.target_name} tier={result.tier}")
     typer.echo(
-        f"latency p50={op['latency_p50_ms']}ms p95={op['latency_p95_ms']}ms "
-        f"cost=${op['total_cost_usd']}"
+        f"queries={op['queries']} latency p50={op['latency_p50_ms']}ms "
+        f"p95={op['latency_p95_ms']}ms cost=${op['total_cost_usd']}"
     )
     typer.echo("")
     typer.echo(format_retrieval_table(aggregate))

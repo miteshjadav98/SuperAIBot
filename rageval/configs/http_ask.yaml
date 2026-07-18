@@ -1,0 +1,24 @@
+# HTTP adapter — an `/ask`-style API returning {answer, sources:[{id,text,score}]}.
+# This is the retrieval-visible shape: answer + chunks (+ optional golden labels) unlock
+# the full metric set (retrieval + answer + operational).
+target:
+  name: ask-api
+  adapter: http
+  golden: data/golden/tiny.jsonl
+  http:
+    url: http://localhost:8000/ask
+    method: POST
+    headers:
+      Content-Type: application/json
+      # Secrets come from the environment; the adapter fails loudly if unset.
+      Authorization: "Bearer ${ASK_API_TOKEN}"
+    body:
+      query: "{question}"        # {question} is substituted per query
+      thread_id: "rageval"
+    timeout_s: 30
+    response:
+      answer: "$.answer"
+      chunks: "$.sources[*]"     # each element → one RetrievedChunk
+      chunk_id: "$.id"           # paths below are relative to each chunk element
+      chunk_text: "$.text"
+      chunk_score: "$.score"

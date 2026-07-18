@@ -1,0 +1,18 @@
+# HTTP adapter — a bare `/chat` API returning {reply}. Answer-only: no chunks are
+# mapped, so the harness detects the ANSWER tier and reports answer + operational
+# metrics only, skipping retrieval metrics (it never fails for lacking them).
+target:
+  name: chat-api
+  adapter: http
+  golden: data/golden/tiny.jsonl
+  http:
+    url: http://localhost:8080/chat
+    method: POST
+    headers:
+      Content-Type: application/json
+    body:
+      message: "{question}"
+    timeout_s: 30
+    response:
+      answer: "$.reply"
+      # no chunks mapping → answer-only tier

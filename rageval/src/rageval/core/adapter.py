@@ -53,10 +53,13 @@ class RAGResult:
 
 @runtime_checkable
 class RAGTarget(Protocol):
-    """Every target implements this. ``retrieve`` is optional (white-box eval only).
+    """The minimal contract every target satisfies: a name and ``query``.
 
-    ``@runtime_checkable`` lets the runner do a light ``isinstance`` capability check
-    for the optional ``retrieve`` method without importing any concrete adapter.
+    ``retrieve`` is deliberately *not* here. Making it part of the base contract would
+    force answer-only targets (a bare ``/chat``, the HTTP adapter) to grow a method they
+    can't honor — and a type checker would reject them as non-conforming. Keeping the base
+    tiny is what lets *anything* plug in; white-box retrieval is a separate, opt-in
+    capability (``RetrievableTarget``) detected at runtime via ``supports_retrieve``.
     """
 
     name: str
@@ -65,20 +68,21 @@ class RAGTarget(Protocol):
         """Ask the target a question and return a normalized result."""
         ...
 
-    # Optional, for white-box retrieval-only eval. Adapters that can expose the raw
-    # retrieval step implement this; those that can't simply omit it and the harness
-    # falls back to whatever ``query`` returns.
+
+@runtime_checkable
+class RetrievableTarget(RAGTarget, Protocol):
+    """A target that can also expose its raw retrieval step (white-box eval)."""
+
     def retrieve(self, question: str, k: int, **context: Any) -> list[RetrievedChunk]:
-        """Return the top-``k`` retrieved chunks for a question (white-box)."""
+        """Return the top-``k`` retrieved chunks for a question."""
         ...
 
 
 def supports_retrieve(target: RAGTarget) -> bool:
     """True if ``target`` exposes the optional white-box ``retrieve`` method.
 
-    Kept here (next to the contract) so callers never need to know how the capability
-    check is implemented — a small guard against the Protocol growing brittle.
+    Kept next to the contract so callers never hand-roll the capability check — they ask
+    here, the harness stays uniform, and answer-only targets are never coerced into faking
+    a retrieval step.
     """
-    retrieve = getattr(type(target), "retrieve", None)
-    base_retrieve = getattr(RAGTarget, "retrieve", None)
-    return callable(retrieve) and retrieve is not base_retrieve
+    return callable(getattr(target, "retrieve", None))

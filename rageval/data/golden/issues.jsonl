@@ -1,0 +1,3 @@
+{"question": "users cannot log in after password reset", "relevant_doc_ids": ["PROJ-1"], "reference_answer": null}
+{"question": "export to CSV produces empty file", "relevant_doc_ids": ["PROJ-2"], "reference_answer": null}
+{"question": "dashboard charts fail to render on mobile", "relevant_doc_ids": ["PROJ-3"], "reference_answer": null}
