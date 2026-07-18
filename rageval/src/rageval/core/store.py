@@ -46,6 +46,17 @@ class ResultsStore:
         self._write_json(target / MANIFEST_FILE, manifest.to_dict())
         return target
 
+    def save_result(self, result: RunResult) -> Path:
+        """Re-persist only ``result.json`` (e.g. after scoring), leaving the manifest as-is.
+
+        Metrics are computed *after* a run is produced, so they mustn't force a new
+        manifest — the reproducibility fingerprint is fixed at run time, not scoring time.
+        """
+        target = self.run_dir(result.run_id)
+        target.mkdir(parents=True, exist_ok=True)
+        self._write_json(target / RESULT_FILE, result.to_dict())
+        return target
+
     def load(self, run_id_or_path: str | Path) -> StoredRun:
         """Load a run by id (under root) or by explicit directory path."""
         path = Path(run_id_or_path)

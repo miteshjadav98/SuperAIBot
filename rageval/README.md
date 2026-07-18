@@ -67,7 +67,7 @@ fails because a richer tier's inputs are absent:
 | answer + retrieved chunks (no labels) | above + context precision (self-eval), retrieval visibility |
 | answer + retrieved + **golden set** | above + Recall / Precision / MRR / NDCG / HitRate |
 
-*(Metric computation lands M2–M4; M1 already detects and records the tier per run.)*
+*(Retrieval metrics land in M2 ✅; answer metrics in M4. The tier is detected per run.)*
 
 ## Quickstart (< 5 minutes, no keys)
 
@@ -75,11 +75,18 @@ fails because a richer tier's inputs are absent:
 cd rageval
 pip install -e ".[dev]"
 
-# Run the offline MockAdapter over the tiny golden set:
+# Run the offline MockAdapter over the tiny golden set and score retrieval:
 rageval run --golden data/golden/tiny.jsonl
 # → run_id=... tier=answer+retrieved+labelled queries=3
 #   latency p50=...ms p95=...ms cost=$0.0
-#   written to runs/run-...
+#
+#   metric           @1      @3      @5
+#   -----------------------------------
+#   recall        0.333   0.333   0.667
+#   precision     0.333   0.111   0.133
+#   mrr           0.333   0.333   0.400
+#   ndcg          0.333   0.333   0.462
+#   hitrate       0.333   0.333   0.667
 
 pytest        # green with zero API keys / network
 ```
@@ -104,8 +111,8 @@ rageval/
 
 ## Roadmap
 
-- **M1 ✅** Core contract + MockAdapter + runner (this milestone).
-- **M2** Retrieval metrics from scratch (Recall/Precision/MRR/NDCG/HitRate) + fixtures.
+- **M1 ✅** Core contract + MockAdapter + runner.
+- **M2 ✅** Retrieval metrics from scratch (Recall/Precision/MRR/NDCG/HitRate) + hand-checked fixtures (this milestone).
 - **M3** Config-driven HTTP adapter + PythonCallable adapter + tier auto-detection.
 - **M4** Answer metrics (faithfulness, relevance, context precision/recall) + judge prompts.
 - **M5** Langfuse tracing, baseline save/check regression gate, GitHub Actions CI.

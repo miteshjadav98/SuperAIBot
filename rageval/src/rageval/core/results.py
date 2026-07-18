@@ -85,6 +85,9 @@ class RunResult:
     target_name: str
     tier: str
     records: list[QueryRecord] = field(default_factory=list)
+    # Run-mean retrieval metrics over labelled records; populated by metrics.score_run
+    # (M2). Empty when the run has no golden labels (answer-only / unlabelled tiers).
+    retrieval_aggregate: dict[str, float] = field(default_factory=dict)
 
     # --- operational rollups (always available, no labels/judge needed) ---
     @property
@@ -119,5 +122,6 @@ class RunResult:
             "target_name": self.target_name,
             "tier": self.tier,
             "operational": self.operational(),
+            "retrieval_aggregate": self.retrieval_aggregate,
             "records": [r.to_dict() for r in self.records],
         }
