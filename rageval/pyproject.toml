@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rageval"
+version = "0.1.0"
+description = "Portable RAG evaluation harness — a reusable 'USB port' that measures retrieval + answer quality and gates regressions in CI for any RAG/ask/chat API."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Mitesh Jadav" }]
+keywords = ["rag", "evaluation", "llm", "retrieval", "llmops", "ci"]
+
+# Core stays deliberately tiny so `pip install rageval` is fast and the harness
+# runs end-to-end on the MockAdapter with zero API keys. Heavier capabilities
+# (HTTP targets, the SuperBot adapter, RAGAS, the dashboard) live behind extras
+# so the core never depends on anything target-specific.
+dependencies = [
+    "pydantic>=2,<3",
+    "pyyaml>=6",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+# The universal HTTP connector (arrives M3) — kept out of core.
+http = ["httpx>=0.27", "jsonpath-ng>=1.6"]
+# Optional additional answer-metric provider (M4) — never the only metric source.
+ragas = ["ragas>=0.2", "datasets>=2"]
+# Streamlit comparison dashboard (M6).
+dashboard = ["streamlit>=1.36", "pandas>=2", "plotly>=5"]
+# Thin adapter that talks to this repo's SuperBot /ask (M7). Guarded so the core
+# stays portable; the harness never imports SuperBot unless this extra is used.
+superbot = ["httpx>=0.27"]
+# Optional self-hosted tracing (M5); degrades to local JSON when absent.
+tracing = ["langfuse>=2"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6",
+]
+
+[project.scripts]
+rageval = "rageval.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rageval"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Sensible, senior default: pyflakes + pycodestyle + isort + bugbear + pyupgrade.
+select = ["E", "F", "I", "B", "UP", "W"]
+# B008: Typer *requires* `typer.Option(...)`/`typer.Argument(...)` calls in defaults —
+# that's the framework's API, not a bug. Ignoring it is the documented Typer convention.
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
+# Optional provider/target SDKs are lazy-imported behind extras; don't fail on them.
+ignore_missing_imports = true

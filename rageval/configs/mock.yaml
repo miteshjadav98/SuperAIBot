@@ -1,0 +1,10 @@
+# Example target config — selects the offline MockAdapter.
+#
+# The config schema stays intentionally small in M1; the config-driven HTTP adapter
+# (with request-body templates and response field mappings) arrives in M3. This file
+# exists so the manifest has a real config to hash and so the shape is established.
+target:
+  name: mock
+  adapter: mock          # one of: mock | http | python_callable | superbot
+golden: data/golden/tiny.jsonl
+runs_dir: runs

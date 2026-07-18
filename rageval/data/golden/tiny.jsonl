@@ -1,0 +1,3 @@
+{"question": "What is the capital of France?", "relevant_doc_ids": ["geo-fr-01"], "reference_answer": "Paris is the capital of France."}
+{"question": "Who wrote the play Hamlet?", "relevant_doc_ids": ["lit-shak-07"], "reference_answer": "William Shakespeare wrote Hamlet."}
+{"question": "What gas do plants absorb during photosynthesis?", "relevant_doc_ids": ["bio-photo-03"], "reference_answer": "Plants absorb carbon dioxide during photosynthesis."}
