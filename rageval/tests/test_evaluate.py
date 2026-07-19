@@ -63,4 +63,4 @@ def test_score_run_no_labels_is_empty() -> None:
 def test_format_table_shapes_output() -> None:
     table = format_retrieval_table({"recall@1": 0.5, "precision@1": 0.5}, ks=(1,))
     assert "recall" in table and "@1" in table
-    assert format_retrieval_table({}) == "(no labelled queries — retrieval metrics skipped)"
+    assert format_retrieval_table({}) == "(no labelled queries - retrieval metrics skipped)"

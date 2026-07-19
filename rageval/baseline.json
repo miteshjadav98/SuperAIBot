@@ -1,0 +1,33 @@
+{
+  "config_hash": "74aaa5b2c0372c2e6ee59856fc2a7ef0dd8f20e08c07bf357c5fb4139dc7e787",
+  "created_at": "2026-07-19T04:19:08.558056+00:00",
+  "dataset_hash": "0873912e8a47d5cf2d80b5feb10ccb3b2755f6609dad879cc36cd5ee5adb7eb3",
+  "git_sha": "e256f011b48e2344373b0a246849de9749d956e1",
+  "metrics": {
+    "hitrate@1": 0.3333333333333333,
+    "hitrate@3": 0.3333333333333333,
+    "hitrate@5": 0.6666666666666666,
+    "mrr@1": 0.3333333333333333,
+    "mrr@3": 0.3333333333333333,
+    "mrr@5": 0.4,
+    "ndcg@1": 0.3333333333333333,
+    "ndcg@3": 0.3333333333333333,
+    "ndcg@5": 0.46228426907818054,
+    "precision@1": 0.3333333333333333,
+    "precision@3": 0.1111111111111111,
+    "precision@5": 0.13333333333333333,
+    "recall@1": 0.3333333333333333,
+    "recall@3": 0.3333333333333333,
+    "recall@5": 0.6666666666666666,
+    "rouge_l": 0.37208216619981327,
+    "token_f1": 0.37208216619981327
+  },
+  "operational": {
+    "latency_p50_ms": 17.0,
+    "latency_p95_ms": 18.0,
+    "total_cost_usd": 0.0
+  },
+  "prompt_versions": {},
+  "run_id": "run-b97470967fb0",
+  "tier": "answer+retrieved+labelled"
+}

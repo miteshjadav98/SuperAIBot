@@ -6,11 +6,11 @@
 > target-specific. This is a RAG-eval SDK with pluggable targets — like a test runner
 > that's independent of the app under test.
 
-> ⚠️ **Status: M1 (foundation).** This milestone ships the adapter contract, result
-> types, run manifest, results store, the offline **MockAdapter**, and an end-to-end
-> runner. Metrics, the HTTP/SuperBot adapters, tracing, the regression gate, and the
-> reports land in later milestones (see the roadmap). Everything here runs with **zero
-> API keys**.
+> ⚠️ **Status: M5.** Shipped so far: the adapter contract, result types, run manifest and
+> store, the offline **MockAdapter**, the runner, retrieval metrics, the config-driven
+> HTTP + PythonCallable adapters, answer metrics (lexical / embedding / LLM-judge), and —
+> this milestone — **run tracing and a baseline regression gate wired into CI**. The
+> reports and dashboard land in M6. The whole harness still runs with **zero API keys**.
 
 ## The adapter contract (the "USB port")
 
@@ -67,7 +67,9 @@ fails because a richer tier's inputs are absent:
 | answer + retrieved chunks (no labels) | above + context precision (self-eval), retrieval visibility |
 | answer + retrieved + **golden set** | above + Recall / Precision / MRR / NDCG / HitRate |
 
-*(Retrieval metrics land in M2 ✅; answer metrics in M4. The tier is detected per run.)*
+*(Retrieval metrics M2 ✅; answer metrics M4 ✅ — lexical token-F1/ROUGE-L for free,
+embedding similarity and LLM-judge faithfulness/relevance/context when a key is present.
+The tier is detected per run.)*
 
 ## Quickstart (< 5 minutes, no keys)
 
@@ -91,8 +93,49 @@ rageval run --golden data/golden/tiny.jsonl
 pytest        # green with zero API keys / network
 ```
 
-Each run writes `runs/<run_id>/result.json` (per-query records + a cost/latency table)
-and `manifest.json` (config hash, git SHA, dataset hash, tier) for reproducibility.
+Each run writes `runs/<run_id>/result.json` (per-query records + a cost/latency table),
+`manifest.json` (config hash, git SHA, dataset hash, tier, judge prompt versions), and
+`trace.json` (one span per query) for reproducibility.
+
+## Regression gate (fail CI when quality drops)
+
+The point of the harness is to **catch a quality regression before it ships**. You bless a
+run you've inspected as the baseline, then gate later runs against it:
+
+```bash
+# 1. Run, inspect, and snapshot the numbers you accept as the reference:
+rageval run --golden data/golden/tiny.jsonl --runs-dir runs
+rageval baseline <run_id> --out baseline.json
+
+# 2. In CI (or before a merge), re-run and fail if quality regressed:
+rageval check --golden data/golden/tiny.jsonl --baseline baseline.json --no-judge
+# → prints a per-metric base/curr/delta table, then:
+#   gate: PASSED - no quality regression against baseline.   (exit 0)
+#   gate: FAILED - regressions in: recall@5, token_f1        (exit 1)
+```
+
+Design choices that make the gate trustworthy:
+
+- **Only quality metrics gate.** Retrieval + answer metrics live in `[0, 1]`, so an
+  absolute `--tolerance` (default `0.01`) is meaningful. Latency and cost are shown as
+  deltas but never fail CI — wall-clock time is environment-dependent and would flake.
+- **A missing metric is a note, not a failure.** A keyless CI run can't reproduce the
+  LLM-judge metrics a locally-keyed baseline recorded, so their absence is reported, not
+  punished. The gate holds the line on what the run could actually measure.
+- **Apples-to-oranges is refused.** A different dataset hash makes the runs incomparable
+  and fails safe; a tier or judge-prompt-version change is surfaced as a note.
+
+A committed `baseline.json` (from the deterministic MockAdapter) plus
+[`.github/workflows/eval.yml`](.github/workflows/eval.yml) means the gate runs on every
+push with **no secrets** — lint, type-check, tests, and the regression check.
+
+## Tracing
+
+Every run is traced behind a tiny `Tracer` interface that degrades gracefully and never
+fails a run. With no keys you get a local `trace.json` (one span per query: input, output,
+latency, retrieved ids, and the scored metrics). Set `LANGFUSE_PUBLIC_KEY` /
+`LANGFUSE_SECRET_KEY` (extra: `pip install 'rageval[tracing]'`) and the same runs stream to
+Langfuse instead — a tracing outage still can't break the eval.
 
 ## Package layout
 
@@ -112,10 +155,10 @@ rageval/
 ## Roadmap
 
 - **M1 ✅** Core contract + MockAdapter + runner.
-- **M2 ✅** Retrieval metrics from scratch (Recall/Precision/MRR/NDCG/HitRate) + hand-checked fixtures (this milestone).
-- **M3** Config-driven HTTP adapter + PythonCallable adapter + tier auto-detection.
-- **M4** Answer metrics (faithfulness, relevance, context precision/recall) + judge prompts.
-- **M5** Langfuse tracing, baseline save/check regression gate, GitHub Actions CI.
+- **M2 ✅** Retrieval metrics from scratch (Recall/Precision/MRR/NDCG/HitRate) + hand-checked fixtures.
+- **M3 ✅** Config-driven HTTP adapter + PythonCallable adapter + tier auto-detection.
+- **M4 ✅** Answer metrics (lexical, embedding, LLM-judge faithfulness/relevance/context) + versioned judge prompts.
+- **M5 ✅** Run tracing (Langfuse + local-JSON fallback), baseline save/check regression gate, GitHub Actions CI (this milestone).
 - **M6** Static HTML report, Streamlit dashboard, architecture diagram, full README.
 - **M7** `SuperBotAdapter` — proof the contract works on a real app (`POST /ask`).
 - **M8** Prove-a-lift: hybrid + reranked retrieval, before/after metric delta.
@@ -126,5 +169,5 @@ rageval/
   provider shim (`core/provider.py`), so it never depends on the host app's LLM factory.
 - **Runs keyless.** MockAdapter is deterministic and offline, so CI and a fresh clone work
   with no secrets — a hard requirement, not a convenience.
-- **Reproducible.** Every run writes a manifest fingerprint; comparisons refuse to be
-  apples-to-oranges once the regression gate lands.
+- **Reproducible.** Every run writes a manifest fingerprint, and the regression gate
+  refuses apples-to-oranges comparisons (different dataset hash → incomparable, fail-safe).

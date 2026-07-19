@@ -1,0 +1,43 @@
+# Keyless CI for the rageval package: lint, type-check, tests, and the regression gate.
+#
+# This workflow is written for the package as a standalone repo — all paths are relative
+# to the rageval/ package root (where this file's .github/ lives). GitHub only auto-runs
+# workflows under the *repository* root's .github/workflows, so as-is this activates when
+# rageval is extracted to its own repo; inside the monorepo it documents the pipeline and
+# would be promoted to the repo root (adding `working-directory: rageval`) to run there.
+#
+# Everything below runs with NO API keys — the MockAdapter is deterministic, so the
+# committed baseline.json is reproducible and the gate is stable on every push.
+name: rag-eval
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install (dev extra)
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Type-check
+        run: mypy src
+
+      - name: Unit tests (no keys, no network)
+        run: pytest -q
+
+      - name: Regression gate vs baseline
+        # Fails the build (exit 1) if any gated quality metric drops below baseline.
+        # --no-judge keeps CI keyless; the gate holds on retrieval + lexical answer metrics.
+        run: rageval check --golden data/golden/tiny.jsonl --baseline baseline.json --no-judge

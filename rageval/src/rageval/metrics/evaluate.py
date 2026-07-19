@@ -68,7 +68,7 @@ def score_run(run: RunResult, ks: Sequence[int] = DEFAULT_KS) -> dict[str, float
 def format_retrieval_table(aggregate: dict[str, float], ks: Sequence[int] = DEFAULT_KS) -> str:
     """Render the run-mean retrieval metrics as a compact fixed-width table."""
     if not aggregate:
-        return "(no labelled queries — retrieval metrics skipped)"
+        return "(no labelled queries - retrieval metrics skipped)"
     metrics = ["recall", "precision", "mrr", "ndcg", "hitrate"]
     header = "metric".ljust(11) + "".join(f"@{k}".rjust(8) for k in ks)
     lines = [header, "-" * len(header)]
@@ -121,7 +121,7 @@ def score_answers(
 def format_answer_table(aggregate: dict[str, float]) -> str:
     """Render the run-mean answer metrics as a two-column table (metric → mean score)."""
     if not aggregate:
-        return "(no answer metrics — no reference answers and no judge/embedder available)"
+        return "(no answer metrics - no reference answers and no judge/embedder available)"
     # Known metrics in a stable order, then any unexpected ones appended alphabetically.
     ordered = [m for m in _ANSWER_METRIC_ORDER if m in aggregate]
     ordered += sorted(m for m in aggregate if m not in _ANSWER_METRIC_ORDER)
