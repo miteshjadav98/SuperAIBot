@@ -6,8 +6,8 @@ Commands:
   * ``check``    — evaluate, then fail (non-zero exit) if quality regressed vs a baseline.
 
 ``run`` and ``check`` share one pipeline (``_execute_run``) so the gate measures exactly
-what a plain run measures. The remaining commands (``compare``, ``report``, ``dashboard``,
-``golden``) arrive in later milestones.
+what a plain run measures. ``report`` renders a stored run as self-contained HTML and
+``dashboard`` launches the Streamlit comparison view.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from rageval.metrics import (
     score_run,
 )
 from rageval.metrics.judge_prompts import PROMPT_VERSIONS
+from rageval.report import render_report
 from rageval.runner import run as run_eval
 
 app = typer.Typer(add_completion=False, help="Portable RAG evaluation harness.")
@@ -253,6 +254,85 @@ def check(
             typer.echo(f"\ngate: FAILED - regressions in: {regressed}")
         raise typer.Exit(code=1)
     typer.echo("\ngate: PASSED - no quality regression against baseline.")
+
+
+@app.command()
+def report(
+    run_id: str = typer.Argument(..., help="Run id (or path) of a stored run to render."),
+    runs_dir: Path = typer.Option(Path("runs"), "--runs-dir", help="Where runs live."),
+    baseline_path: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="Optional baseline.json; include the regression gate verdict in the report.",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="Output HTML path (default: <run-dir>/report.html)."
+    ),
+    tolerance: float = typer.Option(
+        0.01, "--tolerance", help="Gate tolerance when a --baseline is given."
+    ),
+) -> None:
+    """Render a stored run as a self-contained ``report.html`` (no server, no network).
+
+    Pass ``--baseline`` to fold the regression verdict (pass/fail + per-metric deltas) into
+    the report, so a single file tells the whole story of a run against its reference.
+    """
+    store = ResultsStore(runs_dir)
+    stored = store.load(run_id)
+
+    regression = None
+    if baseline_path is not None:
+        if not baseline_path.exists():
+            typer.echo(f"error: baseline not found at {baseline_path}.")
+            raise typer.Exit(code=2)
+        base = Baseline.load(baseline_path)
+        regression = compare(base, stored.result, stored.manifest, tolerance=tolerance)
+
+    html = render_report(stored.result, stored.manifest, regression=regression)
+    destination = out if out is not None else stored.path / "report.html"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(html, encoding="utf-8")
+    typer.echo(f"report written to {destination}")
+
+
+@app.command()
+def dashboard(
+    runs_dir: Path = typer.Option(Path("runs"), "--runs-dir", help="Runs to browse."),
+    port: int = typer.Option(8501, "--port", help="Port for the Streamlit server."),
+) -> None:
+    """Launch the Streamlit dashboard to browse and compare runs (extra: ``[dashboard]``).
+
+    This shells out to ``streamlit run`` on the bundled app; the app itself reads the same
+    ``runs/`` directory the CLI writes, so no data is duplicated.
+    """
+    import subprocess
+    import sys
+    from importlib.util import find_spec
+
+    if find_spec("streamlit") is None:
+        typer.echo(
+            "error: the dashboard needs Streamlit. Install it with: "
+            "pip install 'rageval[dashboard]'"
+        )
+        raise typer.Exit(code=2)
+
+    app_path = Path(__file__).with_name("dashboard.py")
+    typer.echo(f"launching dashboard on http://localhost:{port} (runs-dir={runs_dir})")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(app_path),
+            "--server.port",
+            str(port),
+            "--",
+            "--runs-dir",
+            str(runs_dir),
+        ],
+        check=False,
+    )
 
 
 if __name__ == "__main__":

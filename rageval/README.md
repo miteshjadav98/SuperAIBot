@@ -6,11 +6,13 @@
 > target-specific. This is a RAG-eval SDK with pluggable targets — like a test runner
 > that's independent of the app under test.
 
-> ⚠️ **Status: M5.** Shipped so far: the adapter contract, result types, run manifest and
+> ⚠️ **Status: M6.** Shipped so far: the adapter contract, result types, run manifest and
 > store, the offline **MockAdapter**, the runner, retrieval metrics, the config-driven
-> HTTP + PythonCallable adapters, answer metrics (lexical / embedding / LLM-judge), and —
-> this milestone — **run tracing and a baseline regression gate wired into CI**. The
-> reports and dashboard land in M6. The whole harness still runs with **zero API keys**.
+> HTTP + PythonCallable adapters, answer metrics (lexical / embedding / LLM-judge), run
+> tracing and a baseline regression gate wired into CI, and — this milestone — a
+> **self-contained HTML report, a Streamlit comparison dashboard, and an
+> [architecture diagram](docs/architecture.md)**. The whole harness still runs with **zero
+> API keys**.
 
 ## The adapter contract (the "USB port")
 
@@ -137,18 +139,45 @@ latency, retrieved ids, and the scored metrics). Set `LANGFUSE_PUBLIC_KEY` /
 `LANGFUSE_SECRET_KEY` (extra: `pip install 'rageval[tracing]'`) and the same runs stream to
 Langfuse instead — a tracing outage still can't break the eval.
 
+## Reports & dashboard
+
+Two ways to read a run — one always-available, one interactive:
+
+```bash
+# A self-contained HTML report for a stored run (no server, no network, no scripts).
+# Pass --baseline to fold the regression verdict + per-metric deltas into the page.
+rageval report <run_id> --baseline baseline.json
+# → report written to runs/<run_id>/report.html   (open it in any browser)
+
+# The interactive comparison view — line up several runs and watch a metric move.
+pip install -e ".[dashboard]"
+rageval dashboard          # → http://localhost:8501, reads the same runs/ directory
+```
+
+The **report** is pure stdlib (it lives in the portable core, so generating one pulls in no
+extra and never touches a target); the **dashboard** is Streamlit behind the `[dashboard]`
+extra. Both read the exact `runs/<id>/*.json` the CLI writes — the terminal tables, the HTML
+report, and the dashboard are three views of one source of truth.
+
+See [`docs/architecture.md`](docs/architecture.md) for the full data-flow diagram and the
+one rule the design serves: **the core imports nothing target-specific.**
+
 ## Package layout
 
 ```
 rageval/
 ├── src/rageval/
-│   ├── core/         # adapter contract, result types, manifest, store — ZERO target deps
-│   ├── adapters/     # mock (here now); http, superbot (later, behind extras)
+│   ├── core/         # adapter contract, results, manifest, store, baseline, tracing — ZERO target deps
+│   ├── adapters/     # mock (here now); http, python_callable; superbot (M7, behind extra)
+│   ├── metrics/      # retrieval + answer metrics, implemented from scratch
 │   ├── datasets/     # golden-set loaders
 │   ├── runner.py     # drives a target over a golden set → RunResult
+│   ├── report.py     # self-contained static HTML report (pure stdlib)
+│   ├── dashboard.py  # Streamlit comparison view (behind the [dashboard] extra)
 │   └── cli.py        # `rageval` command
 ├── configs/          # example target configs
 ├── data/golden/      # versioned golden JSONL (hashed into each run manifest)
+├── docs/             # architecture diagram + design notes
 └── tests/            # run with no keys / no network
 ```
 
@@ -159,7 +188,7 @@ rageval/
 - **M3 ✅** Config-driven HTTP adapter + PythonCallable adapter + tier auto-detection.
 - **M4 ✅** Answer metrics (lexical, embedding, LLM-judge faithfulness/relevance/context) + versioned judge prompts.
 - **M5 ✅** Run tracing (Langfuse + local-JSON fallback), baseline save/check regression gate, GitHub Actions CI (this milestone).
-- **M6** Static HTML report, Streamlit dashboard, architecture diagram, full README.
+- **M6 ✅** Static HTML report (self-contained), Streamlit comparison dashboard, architecture diagram.
 - **M7** `SuperBotAdapter` — proof the contract works on a real app (`POST /ask`).
 - **M8** Prove-a-lift: hybrid + reranked retrieval, before/after metric delta.
 
