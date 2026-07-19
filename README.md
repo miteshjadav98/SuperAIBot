@@ -210,6 +210,29 @@ examples.
 Editing a prompt takes effect after the agent process restarts (prompts are read
 when each graph is built).
 
+## Evaluation — the `rageval` harness
+
+This repo also ships **[`rageval/`](rageval/README.md)** — a portable RAG **evaluation
+harness** that measures retrieval + answer quality and **gates regressions in CI**. It's a
+reusable "USB port": it talks to any RAG system through a tiny adapter interface and its core
+imports nothing target-specific, so it's a self-contained, `pip install`-able package (its
+own `pyproject.toml`, tests, and GitHub Actions) that runs end-to-end with **zero API keys**.
+
+| Capability | What it gives you |
+| --- | --- |
+| **Pluggable targets** | A `SuperBotAdapter` evaluates this platform's `POST /ask` directly (black-box), or scores retrieval white-box via the PDF Chatbot's own `_hybrid_retrieve`. Also a MockAdapter, a config-driven HTTP adapter, and a PythonCallable adapter. |
+| **Metrics from scratch** | Retrieval (Recall/Precision/MRR/NDCG/HitRate) + answer quality (lexical, embedding, LLM-judge), over auto-detected evaluation tiers. |
+| **Regression gate** | Bless a baseline, then **fail CI when quality drops** — plus run tracing, a self-contained HTML report, and a Streamlit comparison dashboard. |
+| **Proves a lift** | A keyless experiment where the harness *measures* a real retrieval improvement (RRF hybrid vs BM25: recall@3 **+0.25**). |
+
+```powershell
+cd rageval
+..\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+rageval run --golden data/golden/tiny.jsonl --no-judge   # runs offline, no keys
+```
+
+See **[`rageval/README.md`](rageval/README.md)** for the full walkthrough and design notes.
+
 ## Prerequisites
 
 - Python 3.11–3.13
