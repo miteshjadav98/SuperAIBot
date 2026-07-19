@@ -6,15 +6,19 @@
 > target-specific. This is a RAG-eval SDK with pluggable targets — like a test runner
 > that's independent of the app under test.
 
-> ✅ **Status: M8 — feature-complete.** Shipped: the adapter contract, result types, run
-> manifest and store, the offline **MockAdapter**, the runner, retrieval metrics, the
-> config-driven HTTP + PythonCallable adapters, answer metrics (lexical / embedding /
-> LLM-judge), run tracing and a baseline regression gate wired into CI, a self-contained
-> HTML report + a Streamlit dashboard + an [architecture diagram](docs/architecture.md), the
-> **`SuperBotAdapter`** (first adapter against a real running app — verified live against
-> `POST /ask`), and — this milestone — a **prove-a-lift experiment**: the harness measuring
-> a real retrieval improvement (RRF hybrid vs BM25). The core still runs with **zero API
-> keys**.
+> ✅ **Feature-complete.** Everything below is built and tested — **135 tests, `ruff` +
+> `mypy --strict` clean, and the whole core runs with zero API keys**. At a glance:
+>
+> - **Pluggable targets** — a tiny adapter contract; a deterministic MockAdapter, a
+>   config-driven HTTP adapter, a PythonCallable adapter, and a `SuperBotAdapter`
+>   *verified live against a real running app*.
+> - **Metrics from scratch** — retrieval (Recall/Precision/MRR/NDCG/HitRate) and answer
+>   quality (lexical, embedding, LLM-judge), applied over auto-detected evaluation tiers.
+> - **Ships quality gating** — a baseline regression gate wired into keyless GitHub Actions,
+>   run tracing (Langfuse or local JSON), a self-contained HTML report, and a Streamlit
+>   comparison dashboard.
+> - **Proves its worth** — a keyless experiment where the harness *measures* a real
+>   retrieval improvement (RRF hybrid vs BM25: recall@3 +0.25).
 
 ## The adapter contract (the "USB port")
 
@@ -36,11 +40,17 @@ class RAGResult:
     cost_usd: float | None = None
     raw: dict | None = None
 
-class RAGTarget(Protocol):
+class RAGTarget(Protocol):            # the minimal contract — anything can satisfy it
     name: str
     def query(self, question: str, **context) -> RAGResult: ...
-    def retrieve(self, question: str, k: int, **context) -> list[RetrievedChunk]: ...  # optional
+
+class RetrievableTarget(RAGTarget, Protocol):   # opt-in white-box retrieval
+    def retrieve(self, question: str, k: int, **context) -> list[RetrievedChunk]: ...
 ```
+
+`retrieve` is deliberately kept *out* of the base contract: forcing an answer-only target
+(a bare `/chat`) to grow a method it can't honor would make a type checker reject it. Keeping
+the base tiny is what lets anything plug in.
 
 **Write your own adapter in ~20 lines** — wrap any API and you're done:
 
@@ -57,8 +67,9 @@ class MyAdapter:
         return RAGResult(answer=r["answer"], retrieved=chunks, latency_ms=0.0)
 ```
 
-That's the whole integration cost. (A **config-driven HTTP adapter** — no code, just YAML
-field mappings — arrives in M3, so most APIs won't even need this.)
+That's the whole integration cost. And for most REST APIs you won't even write this much: a
+**config-driven HTTP adapter** maps the response with JSONPath in YAML — no code at all (see
+[`configs/`](configs/)).
 
 ## Tiered evaluation (the headline feature)
 
@@ -71,9 +82,10 @@ fails because a richer tier's inputs are absent:
 | answer + retrieved chunks (no labels) | above + context precision (self-eval), retrieval visibility |
 | answer + retrieved + **golden set** | above + Recall / Precision / MRR / NDCG / HitRate |
 
-*(Retrieval metrics M2 ✅; answer metrics M4 ✅ — lexical token-F1/ROUGE-L for free,
-embedding similarity and LLM-judge faithfulness/relevance/context when a key is present.
-The tier is detected per run.)*
+*The tier is detected per run from what the target returns. Lexical answer metrics
+(token-F1/ROUGE-L) run for free against a reference answer; embedding similarity and the
+LLM-judge metrics (faithfulness/relevance/context) switch on automatically when a provider
+key is present, and are simply skipped — never failed — when it isn't.*
 
 ## Quickstart (< 5 minutes, no keys)
 
@@ -81,10 +93,10 @@ The tier is detected per run.)*
 cd rageval
 pip install -e ".[dev]"
 
-# Run the offline MockAdapter over the tiny golden set and score retrieval:
-rageval run --golden data/golden/tiny.jsonl
-# → run_id=... tier=answer+retrieved+labelled queries=3
-#   latency p50=...ms p95=...ms cost=$0.0
+# Run the offline MockAdapter over the tiny golden set and score it (no keys needed):
+rageval run --golden data/golden/tiny.jsonl --no-judge
+# → run_id=... target=mock tier=answer+retrieved+labelled
+#   queries=3 latency p50=17.0ms p95=18.0ms cost=$0.0
 #
 #   metric           @1      @3      @5
 #   -----------------------------------
@@ -93,13 +105,23 @@ rageval run --golden data/golden/tiny.jsonl
 #   mrr           0.333   0.333   0.400
 #   ndcg          0.333   0.333   0.462
 #   hitrate       0.333   0.333   0.667
+#
+#   answer metric          score
+#   ----------------------------
+#   token_f1               0.372
+#   rouge_l                0.372
 
 pytest        # green with zero API keys / network
 ```
 
-Each run writes `runs/<run_id>/result.json` (per-query records + a cost/latency table),
-`manifest.json` (config hash, git SHA, dataset hash, tier, judge prompt versions), and
-`trace.json` (one span per query) for reproducibility.
+Drop `--no-judge` and the LLM-judge answer metrics switch on automatically **if** a provider
+key is in the environment; with no key they're skipped with a notice, and the run still
+succeeds. Each run writes its artifacts under `runs/<run_id>/`:
+
+- `result.json` — per-query records + the cost/latency rollup,
+- `manifest.json` — the reproducibility fingerprint (config hash, git SHA, dataset hash,
+  tier, judge-prompt versions),
+- `trace.json` — one span per query.
 
 ## Regression gate (fail CI when quality drops)
 
@@ -166,9 +188,9 @@ one rule the design serves: **the core imports nothing target-specific.**
 
 ## Evaluating a real app: the SuperBot adapter
 
-M1–M6 proved the harness on the MockAdapter and canned HTTP responses; the `SuperBotAdapter`
-(extra: `[superbot]`) is the first adapter against a **live** RAG service — this repo's own
-SuperBot gateway — and it demonstrates both evaluation modes:
+Beyond the mock and canned HTTP responses, the `SuperBotAdapter` (extra: `[superbot]`) is
+the first adapter against a **live** RAG service — this repo's own SuperBot gateway,
+verified end-to-end against a running `POST /ask`. It demonstrates both evaluation modes:
 
 ```bash
 pip install -e ".[superbot]"
@@ -246,13 +268,13 @@ rageval/
 └── tests/            # run with no keys / no network
 ```
 
-## Roadmap
+## Build log — milestones, each its own reviewed commit
 
 - **M1 ✅** Core contract + MockAdapter + runner.
 - **M2 ✅** Retrieval metrics from scratch (Recall/Precision/MRR/NDCG/HitRate) + hand-checked fixtures.
 - **M3 ✅** Config-driven HTTP adapter + PythonCallable adapter + tier auto-detection.
 - **M4 ✅** Answer metrics (lexical, embedding, LLM-judge faithfulness/relevance/context) + versioned judge prompts.
-- **M5 ✅** Run tracing (Langfuse + local-JSON fallback), baseline save/check regression gate, GitHub Actions CI (this milestone).
+- **M5 ✅** Run tracing (Langfuse + local-JSON fallback), baseline save/check regression gate, GitHub Actions CI.
 - **M6 ✅** Static HTML report (self-contained), Streamlit comparison dashboard, architecture diagram.
 - **M7 ✅** `SuperBotAdapter` — the contract on a real app: black-box `POST /ask` + opt-in white-box retrieval.
 - **M8 ✅** Prove-a-lift: RRF hybrid vs BM25 retrieval, harness-measured before/after delta (recall@3 +0.25).
