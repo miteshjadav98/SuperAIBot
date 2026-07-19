@@ -61,6 +61,25 @@ class PythonCallableConfig(BaseModel):
     kind: Literal["query", "retrieve"] = "query"
 
 
+class SuperBotConfig(BaseModel):
+    """Talk to this repo's SuperBot gateway. Secrets stay in env, never here.
+
+    ``white_box`` opts into scoring retrieval by calling the app's own retriever directly;
+    it needs the backend importable and an ``owner`` (or credentials whose login resolves
+    one). Everything security-sensitive (token, email, password) is read from the
+    environment at call time, so this block is safe to commit and to hash into the manifest.
+    """
+
+    base_url: str = "http://localhost:8000"
+    thread_id: str = "rageval"
+    timeout_s: float = 60.0
+    white_box: bool = False
+    owner: str | None = None
+    rerank: bool = True
+    final_k: int = 4
+    retrieve_id_field: str = "source"
+
+
 class TargetConfig(BaseModel):
     """A full target declaration (usually the ``target:`` block of a YAML file)."""
 
@@ -68,6 +87,7 @@ class TargetConfig(BaseModel):
     adapter: AdapterName
     http: HTTPTargetConfig | None = None
     python_callable: PythonCallableConfig | None = None
+    superbot: SuperBotConfig | None = None
     golden: str | None = None
     runs_dir: str = "runs"
 
@@ -106,5 +126,19 @@ def build_target(config: TargetConfig, **context: Any) -> RAGTarget:
             name=config.name,
             kind=config.python_callable.kind,
         )
-    # 'superbot' lands in M7 behind the [superbot] extra.
+    if config.adapter == "superbot":
+        sb = config.superbot or SuperBotConfig()
+        from rageval.adapters.superbot import SuperBotAdapter
+
+        return SuperBotAdapter(
+            base_url=sb.base_url,
+            thread_id=sb.thread_id,
+            timeout_s=sb.timeout_s,
+            white_box=sb.white_box,
+            owner=sb.owner,
+            rerank=sb.rerank,
+            final_k=sb.final_k,
+            retrieve_id_field=sb.retrieve_id_field,
+            name=config.name,
+        )
     raise ValueError(f"Unknown or not-yet-implemented adapter: {config.adapter!r}")

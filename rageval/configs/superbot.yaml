@@ -1,0 +1,24 @@
+# SuperBot adapter — evaluate this repo's live RAG gateway (extra: rageval[superbot]).
+#
+# Black-box by default: the adapter logs in (SUPERBOT_EMAIL/SUPERBOT_PASSWORD or a
+# pre-issued SUPERBOT_TOKEN, read from the environment — never here) and calls
+# POST /ask, which returns only {answer}. That's an answer-tier run: answer + operational
+# metrics, retrieval skipped.
+#
+# Flip white_box: true to ALSO score retrieval — the adapter calls the app's own
+# _hybrid_retrieve directly (needs SuperBot's backend importable on the PYTHONPATH). Chunks
+# are scored at document granularity, so golden relevant_doc_ids are source PDF filenames.
+target:
+  name: superbot
+  adapter: superbot
+  golden: data/golden/tiny.jsonl
+  superbot:
+    base_url: http://localhost:8000
+    thread_id: rageval
+    timeout_s: 60
+    # --- white-box retrieval (optional) ---
+    white_box: false           # true → also compute Recall/Precision/MRR/NDCG/HitRate
+    # owner:                    # user _id to scope docs; omitted → taken from login
+    rerank: true               # apply the app's FlashRank cross-encoder rerank
+    final_k: 4                 # top-k chunks kept from retrieval
+    retrieve_id_field: source  # chunk metadata field used as the doc id for scoring

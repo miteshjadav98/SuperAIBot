@@ -6,12 +6,13 @@
 > target-specific. This is a RAG-eval SDK with pluggable targets — like a test runner
 > that's independent of the app under test.
 
-> ⚠️ **Status: M6.** Shipped so far: the adapter contract, result types, run manifest and
+> ⚠️ **Status: M7.** Shipped so far: the adapter contract, result types, run manifest and
 > store, the offline **MockAdapter**, the runner, retrieval metrics, the config-driven
 > HTTP + PythonCallable adapters, answer metrics (lexical / embedding / LLM-judge), run
-> tracing and a baseline regression gate wired into CI, and — this milestone — a
-> **self-contained HTML report, a Streamlit comparison dashboard, and an
-> [architecture diagram](docs/architecture.md)**. The whole harness still runs with **zero
+> tracing and a baseline regression gate wired into CI, a self-contained HTML report + a
+> Streamlit dashboard + an [architecture diagram](docs/architecture.md), and — this
+> milestone — the **`SuperBotAdapter`: the first adapter against a real running app**
+> (black-box `POST /ask` + opt-in white-box retrieval). The core still runs with **zero
 > API keys**.
 
 ## The adapter contract (the "USB port")
@@ -162,13 +163,43 @@ report, and the dashboard are three views of one source of truth.
 See [`docs/architecture.md`](docs/architecture.md) for the full data-flow diagram and the
 one rule the design serves: **the core imports nothing target-specific.**
 
+## Evaluating a real app: the SuperBot adapter
+
+M1–M6 proved the harness on the MockAdapter and canned HTTP responses; the `SuperBotAdapter`
+(extra: `[superbot]`) is the first adapter against a **live** RAG service — this repo's own
+SuperBot gateway — and it demonstrates both evaluation modes:
+
+```bash
+pip install -e ".[superbot]"
+
+# Credentials come from the environment, never the config (nothing secret is hashed into
+# the manifest). Provide a token, or an email + password to log in with:
+export SUPERBOT_EMAIL=you@example.com SUPERBOT_PASSWORD=...
+
+# Black-box: log in, POST /ask, score the answer. /ask returns only {answer}, so this is
+# an answer-tier run (answer + operational metrics; retrieval is skipped, by design).
+rageval run --golden data/golden/tiny.jsonl --target configs/superbot.yaml
+```
+
+- **Black-box** is the honest default: a deployed API that returns only an answer *can only*
+  be scored on answer quality, and the tier logic says so rather than inventing retrieval
+  numbers.
+- **White-box** (`white_box: true` in the config) additionally scores retrieval by calling
+  the app's own `_hybrid_retrieve` directly — unlocking Recall / Precision / MRR / NDCG.
+  Chunks are scored at **document granularity** (a golden `relevant_doc_ids` entry is a
+  source PDF filename), since SuperBot chunks carry a `source` but no per-chunk id.
+
+Crucially, **the harness core still never imports SuperBot**: the adapter lives behind an
+extra, `config.build_target` imports it lazily, and the white-box retriever is imported
+*inside a method* — so a plain `pip install rageval` needs none of the app.
+
 ## Package layout
 
 ```
 rageval/
 ├── src/rageval/
 │   ├── core/         # adapter contract, results, manifest, store, baseline, tracing — ZERO target deps
-│   ├── adapters/     # mock (here now); http, python_callable; superbot (M7, behind extra)
+│   ├── adapters/     # mock, http, python_callable; superbot (behind the [superbot] extra)
 │   ├── metrics/      # retrieval + answer metrics, implemented from scratch
 │   ├── datasets/     # golden-set loaders
 │   ├── runner.py     # drives a target over a golden set → RunResult
@@ -189,7 +220,7 @@ rageval/
 - **M4 ✅** Answer metrics (lexical, embedding, LLM-judge faithfulness/relevance/context) + versioned judge prompts.
 - **M5 ✅** Run tracing (Langfuse + local-JSON fallback), baseline save/check regression gate, GitHub Actions CI (this milestone).
 - **M6 ✅** Static HTML report (self-contained), Streamlit comparison dashboard, architecture diagram.
-- **M7** `SuperBotAdapter` — proof the contract works on a real app (`POST /ask`).
+- **M7 ✅** `SuperBotAdapter` — the contract on a real app: black-box `POST /ask` + opt-in white-box retrieval.
 - **M8** Prove-a-lift: hybrid + reranked retrieval, before/after metric delta.
 
 ## Design notes

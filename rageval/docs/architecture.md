@@ -16,7 +16,7 @@ flowchart TD
         MOCK["MockAdapter<br/>(deterministic, keyless)"]
         HTTP["HTTP adapter<br/>(config-driven YAML)"]
         PY["PythonCallable adapter"]
-        SB["SuperBotAdapter<br/>(M7 — POST /ask)"]
+        SB["SuperBotAdapter<br/>(POST /ask + white-box)"]
     end
 
     GOLDEN["Golden set<br/>(JSONL: question, reference, relevant_doc_ids)"]
