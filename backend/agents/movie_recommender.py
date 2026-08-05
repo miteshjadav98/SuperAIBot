@@ -72,5 +72,5 @@ MANIFEST = AgentManifest(
     ),
     agent_type="langchain",
     builder=lambda: agent,
-    tags=["movies", "recommendation", "search"],
+    capabilities=["movies", "search"],
 )

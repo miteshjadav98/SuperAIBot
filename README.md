@@ -10,7 +10,9 @@ Each agent doubles as a worked example of an agent-engineering concept:
 
 | Concept | Where to look |
 | --- | --- |
-| **Multi-agent supervisor / routing** | `superbot` graph — LLM classifier + delegation over the registry |
+| **Planner–executor orchestration** | `superbot` graph — request → validated task DAG → agents → merged answer |
+| **Parallel fan-out / fan-in (map-reduce)** | `superbot/executor.py` — `Send` per ready task, results merged through a reducer |
+| **Capability registry** | `core/registry.py` — agents self-declare `capabilities`; planner and lookups read them |
 | **Multi-agent coordinator (agents-as-tools)** | Wedding Planner — flights (MCP) + venues (search) + SQL playlist |
 | **RAG (retrieval-augmented generation)** | PDF Chatbot — chunk → embed → Atlas Vector Search → grounded answers |
 | **Single agent, multiple tools** | Personal Chef / Movie Recommender — `create_agent` + web search tools |
@@ -19,7 +21,7 @@ Each agent doubles as a worked example of an agent-engineering concept:
 
 | Agent | What it does |
 | --- | --- |
-| 🤖 **Super Bot (Auto)** | Router/orchestrator — classifies your message and delegates to the best agent below. |
+| 🤖 **Super Bot (Auto)** | Planner/orchestrator — breaks your message into a task DAG, runs independent tasks across the agents below **in parallel**, and merges the results into one answer. |
 | 🍳 **Personal Chef** | Suggests recipes from your leftover ingredients (web search via Tavily). |
 | ✉️ **Email Agent** | Authenticates, reads an inbox, and sends email — with **human-in-the-loop approval** before anything is sent. |
 | 💍 **Wedding Planner** | Multi-agent coordinator: flights (remote MCP), venues (web search), and a playlist (SQL over `Chinook.db`). |
@@ -55,15 +57,34 @@ backend/
 │  ├─ mcp.py          # get_mcp_tools() — shared MCP loader + retry interceptor
 │  └─ mcp_servers.json# MCP servers, keyed by name (add a server here)
 ├─ superbot/
-│  ├─ router.py       # LLM intent classifier over the registry
-│  └─ graph.py        # supervisor graph, registered as the `superbot` assistant
+│  ├─ state.py        # state schema + reducers (the contract between nodes)
+│  ├─ planner.py      # request → validated task DAG
+│  ├─ executor.py     # dispatch / parallel execute / synthesize nodes
+│  ├─ router.py       # single-agent classifier — the planner's fallback
+│  └─ graph.py        # planner/executor graph, served as the `superbot` assistant
 ├─ api/app.py         # FastAPI: /health, /agents, /chat, + RAG /upload /ask
 └─ langgraph.json     # graph ids served by `langgraph dev`
 ```
 
 **Routing:** picking a specific agent in the dropdown talks to it directly. Picking
-**Super Bot (Auto)** (or calling `POST /chat` without `agent_id`) runs the LLM router,
-which reads each agent's `MANIFEST.description` and delegates to the best match.
+**Super Bot (Auto)** (or calling `POST /chat` without `agent_id`) runs the planner,
+which reads each agent's `MANIFEST.description` and `capabilities` and produces a
+**task DAG**:
+
+```
+plan → dispatch ──Send × N──→ execute ─┐   (independent tasks run in parallel)
+         ↑                             │
+         └─────────────────────────────┘
+         └──→ synthesize → END
+```
+
+So *"recommend a sci-fi film and a dinner I can make with chicken and rice"* runs the
+Movie Recommender and the Personal Chef concurrently, then merges both into one reply.
+A request needing only one agent produces a one-task plan and returns that agent's
+answer verbatim — no extra synthesis call. Guardrails: at most `MAX_TASKS` tasks and
+`MAX_LAYERS` dispatch rounds per run, two attempts per task, and a failing agent is
+recorded as a failed task rather than aborting the others. If planning itself fails,
+the run degrades to the single-agent classifier in `superbot/router.py`.
 
 ## Adding an agent (the plug-and-play recipe)
 
@@ -73,7 +94,8 @@ shape ([`backend/agents/movie_recommender.py`](backend/agents/movie_recommender.
 
 **Step 1 — Create the agent file** `backend/agents/movie_recommender.py`. Build the
 model from the factory (never hardcode a provider), compile a graph as `agent`,
-and declare a `MANIFEST` — the `description` is what the Super Bot router reads:
+and declare a `MANIFEST` — the `description` and `capabilities` are what the Super Bot
+planner reads when it decides which task belongs to which agent:
 
 ```python
 from llm.factory import get_chat_model
@@ -90,6 +112,7 @@ MANIFEST = AgentManifest(
                 "Use for anything about films or what to watch.",
     agent_type="langchain",        # or "langgraph"
     builder=lambda: agent,
+    capabilities=["movies", "search"],   # coarse domain keys; indexed by the registry
 )
 ```
 
@@ -107,12 +130,13 @@ while the gateway is unreachable).
 
 **Step 3 — Add tools if needed.** Define `@tool` functions in the agent file (or a
 shared module) and pass them to `create_agent`. That's it — the registry, the
-`/agents` endpoint, the Super Bot router, and the dropdown all pick it up. Restart
-`langgraph dev` and the agent is live, both directly and via Super Bot routing.
+`/agents` endpoint, the Super Bot planner, and the dropdown all pick it up. Restart
+`langgraph dev` and the agent is live, both directly and as a task the planner can
+delegate to.
 
 **How streaming works:** the dropdown ([`agent-switcher.tsx`](frontend/src/components/agent-switcher.tsx))
 sets the `assistantId` the chat streams against (and clears the thread). Every
-agent — and the `superbot` supervisor — is a graph on the LangGraph server, so
+agent — and the `superbot` planner — is a graph on the LangGraph server, so
 streaming and the email agent's human-in-the-loop approval work natively in the UI.
 
 ## Adding an MCP server

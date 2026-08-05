@@ -29,10 +29,14 @@ class AgentManifest:
     id: str
     label: str
     emoji: str
-    description: str  # what the LLM router reads to pick this agent
+    description: str  # what the LLM planner reads to pick this agent
     agent_type: AgentType
     builder: Callable[[], Any]  # returns the compiled graph
-    tags: list[str] = field(default_factory=list)
+    capabilities: list[str] = field(default_factory=list)
+    """Domain capabilities this agent provides, e.g. ``["email"]`` or
+    ``["travel", "search"]``. The registry indexes agents by these, and the
+    planner prompt is built from them, so a capability is a real lookup key —
+    not decoration. Keep them coarse and domain-level."""
 
 
 class BaseAgent:

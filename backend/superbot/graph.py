@@ -1,72 +1,53 @@
-"""The Super Bot supervisor graph.
+"""The Super Bot graph — a planner/executor over the agent registry.
 
-A two-node LangGraph graph registered as the ``superbot`` assistant:
+Registered as the ``superbot`` assistant. Where v1 was a router (``classify ->
+delegate``, exactly one agent per turn), v2 plans:
 
-    classify -> delegate
+    plan -> dispatch --Send x N--> execute --+
+              ^                              |
+              |                              |
+              +------------------------------+
+              |
+              +--> synthesize -> END
 
-``classify`` picks an agent — honouring a manual override passed via
-``config.configurable.agent_id`` (or state), otherwise calling the LLM
-:func:`route` classifier. ``delegate`` invokes the chosen agent's compiled
-graph and returns the messages it produced.
+``plan`` produces a validated task DAG, ``dispatch`` fans out each layer of
+independent tasks in parallel, and ``synthesize`` merges the results. Requests
+that span agents ("book the flights and email the itinerary") now work; requests
+that don't still cost one planner call plus one agent call, because a
+single-task plan short-circuits synthesis.
 
-This makes "manual dropdown + LLM fallback" work: when the frontend picks a
-specific assistant it bypasses the Super Bot entirely; when it picks
-``superbot`` (or the API omits ``agent_id``), the LLM routes.
+Manual agent selection is unchanged: pass ``config.configurable.agent_id`` (or
+``agent_id`` in state) and the run becomes a one-task plan for that agent with no
+planner call at all.
 
-Note: nested human-in-the-loop interrupts (e.g. the email agent's send
-approval) are best handled by selecting that agent directly. Routing through
-the Super Bot returns the final response.
+Note: nested human-in-the-loop interrupts (e.g. the email agent's send approval)
+are still best driven by selecting that agent directly — an interrupt inside a
+fanned-out worker propagates to this parent run, so resuming targets the Super
+Bot thread rather than the sub-agent's.
+
+Assembly only — the logic lives in ``planner.py``/``executor.py``, the state
+contract in ``state.py``.
 """
 
 from __future__ import annotations
 
-from typing import Optional
-
-from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import MessagesState
 
-from core.registry import registry
-from core.settings import settings
-from superbot.router import route
-
-
-class SuperBotState(MessagesState):
-    agent_id: Optional[str]  # manual override, if any
-    routed_to: Optional[str]  # the agent actually chosen
-
-
-def _forced_agent(state: SuperBotState, config: RunnableConfig | None) -> str | None:
-    configurable = (config or {}).get("configurable", {})
-    forced = configurable.get("agent_id") or state.get("agent_id")
-    return forced if forced and registry.get(forced) else None
-
-
-async def classify(state: SuperBotState, config: RunnableConfig | None = None) -> dict:
-    forced = _forced_agent(state, config)
-    if forced:
-        return {"routed_to": forced}
-
-    last = state["messages"][-1]
-    query = last.content if hasattr(last, "content") else str(last)
-    return {"routed_to": await route(query)}
-
-
-async def delegate(state: SuperBotState, config: RunnableConfig | None = None) -> dict:
-    agent = registry.get(state["routed_to"]) or registry.get(settings.default_agent_id)
-    incoming = state["messages"]
-    result = await agent.invoke({"messages": incoming}, config=config)
-    # Return only the messages the sub-agent added, so MessagesState's
-    # append reducer doesn't duplicate the conversation so far.
-    produced = result.get("messages", [])[len(incoming):]
-    return {"messages": produced}
-
+from superbot.executor import dispatch, execute, fan_out, plan, synthesize
+from superbot.state import SuperBotState
 
 _builder = StateGraph(SuperBotState)
-_builder.add_node("classify", classify)
-_builder.add_node("delegate", delegate)
-_builder.add_edge(START, "classify")
-_builder.add_edge("classify", "delegate")
-_builder.add_edge("delegate", END)
+
+_builder.add_node("plan", plan)
+_builder.add_node("dispatch", dispatch)
+_builder.add_node("execute", execute)
+_builder.add_node("synthesize", synthesize)
+
+_builder.add_edge(START, "plan")
+_builder.add_edge("plan", "dispatch")
+# Explicit destinations so Studio and static analysis can see where this goes.
+_builder.add_conditional_edges("dispatch", fan_out, ["execute", "synthesize"])
+_builder.add_edge("execute", "dispatch")  # next layer, or fall through to synthesis
+_builder.add_edge("synthesize", END)
 
 agent = _builder.compile()

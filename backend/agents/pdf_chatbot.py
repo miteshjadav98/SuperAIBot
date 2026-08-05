@@ -388,5 +388,5 @@ MANIFEST = AgentManifest(
     ),
     agent_type="langchain",
     builder=lambda: agent,
-    tags=["pdf", "rag", "documents"],
+    capabilities=["documents"],
 )

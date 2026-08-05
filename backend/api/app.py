@@ -30,7 +30,6 @@ from core.security import (
     verify_password,
 )
 from core.settings import settings
-from superbot.router import route
 
 app = FastAPI(title="SuperBot Platform API")
 
@@ -52,7 +51,7 @@ async def health():
 
 @app.get("/agents")
 async def list_agents():
-    return {"agents": registry.manifests()}
+    return {"agents": registry.manifests(), "capabilities": registry.capabilities()}
 
 
 # --- Auth --------------------------------------------------------------------
@@ -161,34 +160,51 @@ class ChatRequest(BaseModel):
 _persistent_graphs: dict[str, object] = {}
 
 
-def _gateway_graph(agent: BaseAgent):
+def _with_checkpointer(key: str, compiled):
+    """Recompile ``compiled`` against the Mongo checkpointer, cached by ``key``.
+    Degrades to the checkpointer-less graph when Mongo isn't configured — no
+    memory, but still functional."""
     if not db.mongo_configured():
-        return agent.graph  # no memory, but still functional
-    if agent.id in _persistent_graphs:
-        return _persistent_graphs[agent.id]
+        return compiled
+    if key in _persistent_graphs:
+        return _persistent_graphs[key]
 
-    builder = getattr(agent.graph, "builder", None)
+    builder = getattr(compiled, "builder", None)
     if builder is None:
-        return agent.graph
+        return compiled
 
     from langgraph.checkpoint.mongodb import MongoDBSaver
 
     saver = MongoDBSaver(db.get_client(), db_name=settings.mongodb_db)
     graph = builder.compile(checkpointer=saver)
-    _persistent_graphs[agent.id] = graph
+    _persistent_graphs[key] = graph
     return graph
+
+
+def _gateway_graph(agent: BaseAgent):
+    return _with_checkpointer(agent.id, agent.graph)
+
+
+def _superbot_graph():
+    """The planner/executor graph, which may span several agents in one turn."""
+    from superbot.graph import agent as superbot
+
+    return _with_checkpointer("superbot", superbot)
 
 
 @app.post("/chat")
 async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
-    # Manual override wins; otherwise the LLM router classifies.
+    # A manual pick runs that agent directly. Otherwise the Super Bot plans the
+    # request, which may fan out across several agents.
     agent_id = request.agent_id if registry.get(request.agent_id or "") else None
-    if agent_id is None:
-        agent_id = await route(request.query)
 
-    agent = registry.get(agent_id) or registry.get(settings.default_agent_id)
-    if agent is None:
-        raise HTTPException(status_code=503, detail="No agents are registered.")
+    if agent_id is None:
+        graph = _superbot_graph()
+    else:
+        agent = registry.get(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=503, detail="No agents are registered.")
+        graph = _gateway_graph(agent)
 
     from langchain_core.messages import HumanMessage
 
@@ -201,7 +217,6 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
         }
     }
     try:
-        graph = _gateway_graph(agent)
         result = await graph.ainvoke(
             {"messages": [HumanMessage(content=request.query)]}, config=config
         )
@@ -210,8 +225,9 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
 
     last = result["messages"][-1]
     return {
-        "agent_id": agent_id,
+        "agent_id": agent_id or result.get("routed_to"),
         "routed": request.agent_id is None,
+        "plan": result.get("plan"),
         "answer": getattr(last, "content", str(last)),
     }
 

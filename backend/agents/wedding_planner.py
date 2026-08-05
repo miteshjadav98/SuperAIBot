@@ -217,5 +217,5 @@ MANIFEST = AgentManifest(
     ),
     agent_type="langgraph",
     builder=lambda: agent,
-    tags=["wedding", "multi-agent", "mcp", "sql", "search"],
+    capabilities=["travel", "venues", "planning", "search", "database"],
 )

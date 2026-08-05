@@ -137,5 +137,5 @@ MANIFEST = AgentManifest(
     ),
     agent_type="langchain",
     builder=lambda: agent,
-    tags=["email", "human-in-the-loop"],
+    capabilities=["email"],
 )

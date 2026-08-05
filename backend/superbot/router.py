@@ -1,8 +1,13 @@
-"""LLM intent classifier for the Super Bot.
+"""Single-agent LLM classifier — the Super Bot's fallback path.
 
 Given a user query, pick the best agent id from the registry's descriptions.
 Falls back to ``settings.default_agent_id`` when the model is unsure or returns
 something not in the registry.
+
+Since v2 the primary path is :mod:`superbot.planner`, which produces a task DAG
+rather than a single choice. This stays because planning must never hard-fail:
+when the planner errors or returns nothing usable, the run degrades to one
+agent chosen here — the platform's pre-v2 behaviour.
 """
 
 from __future__ import annotations

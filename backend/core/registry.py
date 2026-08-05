@@ -55,6 +55,26 @@ class AgentRegistry:
             f"- {a.manifest.id}: {a.manifest.description}" for a in self.all()
         )
 
+    def catalog(self) -> str:
+        """Formatted agent list for the planner prompt — same as
+        :meth:`descriptions` plus each agent's capabilities, which give the
+        planner a compact vocabulary for matching a task to an agent."""
+        lines = []
+        for a in self.all():
+            caps = ", ".join(a.manifest.capabilities) or "general"
+            lines.append(f"- {a.manifest.id} [{caps}]: {a.manifest.description}")
+        return "\n".join(lines)
+
+    def capabilities(self) -> list[str]:
+        """Every capability provided by at least one registered agent."""
+        return sorted({c for a in self.all() for c in a.manifest.capabilities})
+
+    def by_capability(self, capability: str) -> list[BaseAgent]:
+        """Agents providing ``capability``. The lookup that makes adding a
+        second provider for a domain (e.g. another email agent) a registration
+        change rather than a routing-code change."""
+        return [a for a in self.all() if capability in a.manifest.capabilities]
+
     def manifests(self) -> list[dict]:
         """Serializable manifest summaries for the API / frontend."""
         return [
@@ -64,7 +84,7 @@ class AgentRegistry:
                 "emoji": a.manifest.emoji,
                 "description": a.manifest.description,
                 "agent_type": a.manifest.agent_type,
-                "tags": a.manifest.tags,
+                "capabilities": a.manifest.capabilities,
             }
             for a in self.all()
         ]

@@ -58,5 +58,5 @@ MANIFEST = AgentManifest(
     ),
     agent_type="langchain",
     builder=lambda: agent,
-    tags=["food", "recipes", "search"],
+    capabilities=["cooking", "search"],
 )
