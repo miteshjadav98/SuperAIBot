@@ -14,7 +14,6 @@ land — sub-agent message histories stay inside the sub-agent.
 
 from __future__ import annotations
 
-import operator
 from typing import Annotated, Optional, TypedDict
 
 from langgraph.graph.message import MessagesState
@@ -36,6 +35,15 @@ A code-level policy, deliberately not something the planner LLM decides."""
 CONTEXT_MESSAGES = 6
 """How many recent messages ride along in each worker's payload. Send payloads
 are checkpointed per worker, so unbounded history here costs N x history."""
+
+ASSISTANT_AGENT_ID = "assistant"
+"""Reserved agent id for the Super Bot answering in its own voice.
+
+Not a registry agent: it has no tools, no module, and never appears in the
+agent dropdown — it *is* the Super Bot. It exists so the supervisor has
+somewhere to send greetings, "what can you do?", thanks, and follow-ups that
+need no specialist. Without it every turn had to be forced onto a domain agent,
+and the platform introduced itself as a personal chef."""
 
 
 class TaskSpec(BaseModel):
@@ -101,9 +109,25 @@ class TaskPayload(TypedDict):
     interleave two half-finished answers in the chat."""
 
 
+def accumulate_results(
+    current: Optional[list[TaskResult]], incoming: Optional[list[TaskResult]]
+) -> list[TaskResult]:
+    """Append results within a turn; ``None`` starts a fresh one.
+
+    Plain ``operator.add`` was not enough, because the state is checkpointed
+    *per thread*, not per turn. Task ids restart at ``t1`` every turn, so last
+    turn's results made this turn's tasks look already-succeeded: nothing was
+    ready, nothing dispatched, and ``synthesize`` replayed the previous answer.
+    The user saw an agent that had stopped listening.
+    """
+    if incoming is None:
+        return []
+    return [*(current or []), *incoming]
+
+
 class SuperBotState(MessagesState):
     agent_id: Optional[str]  # manual override from config/state; skips planning
     plan: Optional[list[Task]]  # in state so it is inspectable, editable, resumable
-    results: Annotated[list[TaskResult], operator.add]  # parallel writers -> reducer
+    results: Annotated[list[TaskResult], accumulate_results]  # parallel writers
     routed_to: Optional[str]  # which agent(s) actually ran; for observability
     layers: int  # dispatch rounds so far; bounded by MAX_LAYERS

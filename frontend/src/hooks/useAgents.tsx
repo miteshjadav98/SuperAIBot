@@ -20,6 +20,17 @@ export const SUPERBOT: AgentOption = {
 export const DEFAULT_AGENT = SUPERBOT.id;
 
 /**
+ * The id the Super Bot uses when a step is answered in its own voice rather
+ * than by a specialist (backend: `superbot.state.ASSISTANT_AGENT_ID`). It shows
+ * up in execution graphs but never in the switcher — it *is* the Super Bot.
+ */
+export const ASSISTANT: AgentOption = {
+  id: "assistant",
+  label: "Super Bot",
+  emoji: "🤖",
+};
+
+/**
  * Only used while the gateway is loading or unreachable. The real list comes
  * from the backend registry, so adding an agent needs no frontend change.
  */
@@ -53,7 +64,7 @@ export function useAgents() {
   }, []);
 
   const lookup = (id: string): AgentOption =>
-    agents.find((a) => a.id === id) ?? {
+    (id === ASSISTANT.id ? ASSISTANT : agents.find((a) => a.id === id)) ?? {
       id,
       label: id.replace(/_/g, " "),
       emoji: "🔧",

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Send
 
@@ -31,6 +31,7 @@ from core.registry import registry
 from llm.factory import get_chat_model
 from superbot.planner import make_plan, single_task_plan
 from superbot.state import (
+    ASSISTANT_AGENT_ID,
     CONTEXT_MESSAGES,
     MAX_LAYERS,
     SuperBotState,
@@ -46,6 +47,18 @@ Write the single answer the user should see. Merge the results into one coherent
 response, keep the useful detail, and do not mention the agents, the plan, or \
 that the work was split up. If a part failed, say plainly what could not be done \
 and still give the user everything that succeeded."""
+
+_ASSISTANT_DEFAULT = """You are Super Bot, a personal AI assistant.
+
+You work with a team of specialists — a wedding planner, an email assistant, a \
+personal chef, a PDF document expert and a movie recommender — and you hand work \
+to them behind the scenes. This turn needs none of them, so you are answering in \
+your own voice.
+
+Be warm, direct and concise. Answer from the conversation and from what you \
+know. If the user would be better served by one of the specialists, say what you \
+can help with and invite them to ask — never impersonate one of them, and never \
+claim to have done work you have not done."""
 
 
 def _forced_agent(state: SuperBotState, config: RunnableConfig | None) -> str | None:
@@ -70,11 +83,23 @@ async def plan(state: SuperBotState, config: RunnableConfig | None = None) -> di
     query = _query(state["messages"])
 
     forced = _forced_agent(state, config)
-    tasks = single_task_plan(forced, query) if forced else await make_plan(query, state["messages"])
+    if forced:
+        tasks = single_task_plan(forced, query)
+    else:
+        # `routed_to` still holds the *previous* turn's agents at this point —
+        # this node is what overwrites it — which is how a follow-up ("what
+        # about the venue?") stays with the agent that answered before it.
+        tasks = await make_plan(
+            query, state["messages"], previous_agents=state.get("routed_to")
+        )
 
     return {
         "plan": tasks,
         "layers": 0,
+        # Clear last turn's results (see `accumulate_results`): this thread's
+        # state outlives the turn, and stale results would satisfy this turn's
+        # dependencies — the run would answer with the previous turn's output.
+        "results": None,
         "routed_to": ",".join(sorted({t["agent_id"] for t in tasks})) or None,
     }
 
@@ -135,20 +160,43 @@ def _upstream(task: Task, completed: dict[str, str]) -> str:
     return "\n\n".join(parts)
 
 
+def _result(task: Task, ok: bool, output: str) -> dict:
+    return {
+        "results": [
+            TaskResult(task_id=task["id"], agent_id=task["agent_id"], ok=ok, output=output)
+        ]
+    }
+
+
+async def _answer_here(payload: TaskPayload, instruction: str, run_config: dict) -> str:
+    """The Super Bot's own reply — no sub-agent, no tools, just its persona.
+
+    This is the turn the platform used to have nowhere to put: a greeting, "what
+    can you do?", a thank-you. The conversation slice rides along, so a
+    follow-up here reads the same history a specialist would have seen.
+    """
+    system = get_prompt(
+        "superbot_assistant_system", _ASSISTANT_DEFAULT, name="Super Bot — Assistant"
+    )
+    reply = await get_chat_model().ainvoke(
+        [
+            SystemMessage(content=system),
+            *payload["context"],
+            HumanMessage(content=instruction),
+        ],
+        config=run_config,
+    )
+    return str(getattr(reply, "content", ""))
+
+
 async def execute(payload: TaskPayload, config: RunnableConfig | None = None) -> dict:
     """Run one task on one agent. Receives a private payload, not parent state."""
     task = payload["task"]
-    agent = registry.get(task["agent_id"])
+    is_assistant = task["agent_id"] == ASSISTANT_AGENT_ID
+    agent = None if is_assistant else registry.get(task["agent_id"])
 
-    def failed(output: str) -> dict:
-        return {
-            "results": [
-                TaskResult(task_id=task["id"], agent_id=task["agent_id"], ok=False, output=output)
-            ]
-        }
-
-    if agent is None:
-        return failed(f"Agent '{task['agent_id']}' is not registered.")
+    if agent is None and not is_assistant:
+        return _result(task, False, f"Agent '{task['agent_id']}' is not registered.")
 
     instruction = task["instruction"]
     if payload.get("upstream"):
@@ -164,23 +212,22 @@ async def execute(payload: TaskPayload, config: RunnableConfig | None = None) ->
         run_config["tags"] = [*run_config.get("tags", []), "langsmith:nostream"]
 
     try:
-        result = await agent.invoke(
-            {"messages": [*payload["context"], HumanMessage(content=instruction)]},
-            config=run_config,
-        )
-        messages = result.get("messages") or []
-        output = getattr(messages[-1], "content", "") if messages else ""
+        if is_assistant:
+            output = await _answer_here(payload, instruction, run_config)
+        else:
+            result = await agent.invoke(
+                {"messages": [*payload["context"], HumanMessage(content=instruction)]},
+                config=run_config,
+            )
+            messages = result.get("messages") or []
+            output = getattr(messages[-1], "content", "") if messages else ""
     except Exception as exc:  # noqa: BLE001 — isolate branch failures
-        return failed(f"{type(exc).__name__}: {exc}")
+        return _result(task, False, f"{type(exc).__name__}: {exc}")
 
     if not str(output).strip():
-        return failed("The agent returned an empty response.")
+        return _result(task, False, "The agent returned an empty response.")
 
-    return {
-        "results": [
-            TaskResult(task_id=task["id"], agent_id=task["agent_id"], ok=True, output=str(output))
-        ]
-    }
+    return _result(task, True, str(output))
 
 
 async def synthesize(state: SuperBotState) -> dict:

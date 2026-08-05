@@ -148,6 +148,30 @@ That last rule is the elegant one: it kills forward references and makes cycles
 *unrepresentable*, so the scheduler cannot deadlock on a malformed plan. No cycle
 detection algorithm required.
 
+### 3.6 The supervisor's own voice
+
+`ASSISTANT_AGENT_ID` ("assistant") is a task destination that is *not* a registry
+agent: no module, no tools, never in the agent dropdown — it **is** the Super
+Bot, answering with its own persona (`superbot_assistant_system`). Without it,
+every turn had to be forced onto a domain specialist, so "who are you?" fell to
+the default agent and the platform introduced itself as a personal chef.
+
+### 3.7 Routing across turns
+
+The supervisor is stateless per turn by design, which loses conversations: a
+follow-up like *"what about the budget?"* carries no clue about which agent
+answered the question it follows. So `plan` reads `routed_to` — still holding the
+previous turn's agents, because this node is what overwrites it — and passes it
+to the planner as a **tie-breaker, not a lock-in**: same subject stays with the
+same agent, a changed subject switches immediately.
+
+The counterpart is turn *isolation*. Thread state outlives the turn while task
+ids restart at `t1`, so `results` uses a reducer that a `None` write resets
+(`accumulate_results`), and `plan` writes that `None` on every turn. Plain
+`operator.add` left last turn's `t1` marked succeeded: nothing became ready,
+nothing dispatched, and `synthesize` replayed the previous answer — a bot that
+looked like it had stopped listening.
+
 ---
 
 ## 4. Memory
@@ -358,6 +382,8 @@ synthesis failure returns the raw task results rather than losing completed work
 | Orchestration | Planner → bounded DAG | ReAct agent-of-agents | Requests needed to adapt mid-run |
 | Replanning | None | Replan-on-failure loop | Plans measurably went stale |
 | Capability routing | Planner emits `agent_id` | Capability → agent resolver | Two agents shared a capability |
+| General chat | Reserved `assistant` id | A registered general agent | It needed tools or its own memory |
+| Turn continuity | Previous `routed_to` as a hint | Pinning the thread to an agent | Users wanted an explicit "stay here" |
 | Memory schema | Collection | Profile, or both | Facts became bounded and structured |
 | Retrieval | Load all | Vector search | > ~50 memories/user |
 | Store backend | Mongo `BaseStore` | `PostgresStore` | Postgres entered the stack anyway |

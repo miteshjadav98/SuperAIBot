@@ -65,8 +65,11 @@ class Settings(BaseSettings):
     auth_secret: str = "change-me-in-.env"
     access_token_ttl_hours: int = 72
 
-    # Super Bot router fallback when classification is uncertain.
-    default_agent_id: str = "personal_chef"
+    # Super Bot router fallback when classification is uncertain. Defaults to
+    # the Super Bot's own voice (superbot.state.ASSISTANT_AGENT_ID) rather than
+    # a specialist — an uncertain turn should sound like the assistant, not like
+    # a personal chef who was handed a question about weddings.
+    default_agent_id: str = "assistant"
 
     # What happens when a second request arrives on a thread that is still
     # running: "reject" (409, the default) or "enqueue" (run it after).

@@ -17,15 +17,18 @@ from pydantic import BaseModel, Field
 from core.registry import registry
 from core.settings import settings
 from llm.factory import get_chat_model
+from superbot.state import ASSISTANT_AGENT_ID
 
-_SYSTEM = """You are the router for a multi-agent platform. Given the user's \
-message, choose the single best agent to handle it from the list below. \
-Respond with that agent's exact id and your confidence (0-1).
+_SYSTEM = """You are the router for Super Bot, a personal AI assistant. Given \
+the user's message, choose the single best agent to handle it from the list \
+below. Respond with that agent's exact id and your confidence (0-1).
 
 Available agents:
 {agents}
+- {assistant_id}: Super Bot answering in its own voice — greetings, small talk, \
+what Super Bot is or can do, and anything no specialist above covers.
 
-If no agent is a good fit, choose "{default}"."""
+If no specialist is a good fit, choose "{default}"."""
 
 
 class RouteDecision(BaseModel):
@@ -35,8 +38,8 @@ class RouteDecision(BaseModel):
 
 async def route(query: str, *, confidence_floor: float = 0.35) -> str:
     """Return the chosen agent id (validated against the registry)."""
-    valid_ids = set(registry.ids())
-    if not valid_ids:
+    valid_ids = {*registry.ids(), ASSISTANT_AGENT_ID}
+    if not registry.ids():
         return settings.default_agent_id
 
     # Structured output, so keep its tokens out of the UI stream (see planner).
@@ -46,7 +49,9 @@ async def route(query: str, *, confidence_floor: float = 0.35) -> str:
         .with_config(tags=["langsmith:nostream"])
     )
     prompt = _SYSTEM.format(
-        agents=registry.descriptions(), default=settings.default_agent_id
+        agents=registry.descriptions(),
+        assistant_id=ASSISTANT_AGENT_ID,
+        default=settings.default_agent_id,
     )
     try:
         decision: RouteDecision = await model.ainvoke(
