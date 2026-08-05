@@ -25,7 +25,7 @@ below. Respond with that agent's exact id and your confidence (0-1).
 
 Available agents:
 {agents}
-- {assistant_id}: Super Bot answering in its own voice — greetings, small talk, \
+- {assistant_id}: Super Bot answering in its own voice — small talk, thanks, \
 what Super Bot is or can do, and anything no specialist above covers.
 
 If no specialist is a good fit, choose "{default}"."""

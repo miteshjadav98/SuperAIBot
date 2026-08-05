@@ -39,6 +39,7 @@ If you're skimming the code, these are the parts worth opening:
 | Agent | What it does |
 | --- | --- |
 | 🤖 **Super Bot (Auto)** | The orchestrator — plans a task DAG, runs agents in parallel, merges the results |
+| 🌤 **Personal Assistant** | Your daily briefing: weather, what's due, what's overdue, and what to do about it. Say *"good morning"*. Also keeps the task list |
 | 🍳 **Personal Chef** | Recipes from the ingredients you have (web search via Tavily) |
 | ✉️ **Email Agent** | Searches, reads, drafts, replies, archives and trashes — with **approval required** before anything is sent or destroyed. Runs on a built-in mock mailbox, so no credentials needed |
 | 💍 **Wedding Planner** | Agents-as-tools coordinator: flights (remote MCP), venues (web search), playlist (SQL over `Chinook.db`) |
@@ -343,6 +344,8 @@ into `os.environ` directly. See [`.env.example`](.env.example) for the full list
 | `MONGODB_URI` | — | Required for login. Without it the platform still boots with in-memory fallbacks |
 | `AUTH_SECRET` | — | JWT signing key: `python -c "import secrets; print(secrets.token_hex(32))"` |
 | `EMAIL_PROVIDER` | `mock` | A working in-memory mailbox. `gmail` is a documented seam, not yet implemented |
+| `WEATHER_PROVIDER` | `openmeteo` | Free, no API key. OpenWeather and the `weather-mcp` server are documented seams |
+| `TODO_PROVIDER` | `internal` | The built-in Mongo task list; falls back to in-process without `MONGODB_URI`. Notion / Google Tasks are seams |
 | `RUN_CONCURRENCY_POLICY` | `reject` | Or `enqueue`. What happens on a second request to a busy thread |
 | `MODEL_PRICING` | unset | USD per million tokens as JSON. Tokens are always recorded; cost only when set, since rates vary by contract |
 
@@ -354,6 +357,7 @@ One cluster and database backs everything:
 | --- | --- |
 | `users` | Accounts (email, bcrypt hash) |
 | `agent_memory` | Cross-agent long-term memory, namespaced per user |
+| `todos` | The Personal Assistant's task list, scoped by `owner` |
 | `pdf_chunks` | Atlas Vector Search for PDF RAG, stamped with `owner` |
 | `checkpoints*` | Per-user conversation memory |
 | `run_metrics` | Tokens, latency and cost per run |
@@ -374,6 +378,21 @@ unreachable the agent falls back to that default and keeps working.
 creating, versioning, publishing and rolling back those prompts, with Swagger UI
 at `/docs`. It must point at the same `MONGODB_DB` as the backend. Edits take
 effect on the next agent restart.
+
+Seeding is one-way, and that catches people out: once a prompt exists in Mongo
+the stored version always wins, so **changing a default in code reaches only
+environments that have never seen that prompt**. That is deliberate — a deploy
+must not silently revert an edit made in the UI — but it means a changed default
+needs publishing:
+
+```bash
+cd backend
+python scripts/publish_prompts.py           # dry run: which defaults differ
+python scripts/publish_prompts.py --apply   # publish them as new versions
+```
+
+Publishing is additive: each change becomes a new immutable version and the
+registry pointer moves, so the previous one is a rollback away.
 
 ---
 

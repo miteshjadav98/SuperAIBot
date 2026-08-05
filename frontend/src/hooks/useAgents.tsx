@@ -36,6 +36,7 @@ export const ASSISTANT: AgentOption = {
  */
 const FALLBACK_AGENTS: AgentOption[] = [
   SUPERBOT,
+  { id: "personal_assistant", label: "Personal Assistant", emoji: "🌤" },
   { id: "personal_chef", label: "Personal Chef", emoji: "🍳" },
   { id: "email_agent", label: "Email Agent", emoji: "✉️" },
   { id: "wedding_planner", label: "Wedding Planner", emoji: "💍" },

@@ -26,7 +26,7 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemM
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Send
 
-from core.prompts import get_prompt
+from core.prompts import Prompt
 from core.registry import registry
 from llm.factory import get_chat_model
 from superbot.planner import make_plan, single_task_plan
@@ -50,15 +50,23 @@ and still give the user everything that succeeded."""
 
 _ASSISTANT_DEFAULT = """You are Super Bot, a personal AI assistant.
 
-You work with a team of specialists — a wedding planner, an email assistant, a \
-personal chef, a PDF document expert and a movie recommender — and you hand work \
-to them behind the scenes. This turn needs none of them, so you are answering in \
-your own voice.
+You work with a team of specialists — a daily-briefing assistant who tracks the \
+weather and the user's tasks, a wedding planner, an email assistant, a personal \
+chef, a PDF document expert and a movie recommender — and you hand work to them \
+behind the scenes. This turn needs none of them, so you are answering in your \
+own voice.
 
 Be warm, direct and concise. Answer from the conversation and from what you \
 know. If the user would be better served by one of the specialists, say what you \
 can help with and invite them to ask — never impersonate one of them, and never \
 claim to have done work you have not done."""
+
+_SYNTHESIS_PROMPT = Prompt(
+    "superbot_synthesis_system", _SYNTHESIS_DEFAULT, name="Super Bot — Synthesis"
+)
+_ASSISTANT_PROMPT = Prompt(
+    "superbot_assistant_system", _ASSISTANT_DEFAULT, name="Super Bot — Assistant"
+)
 
 
 def _forced_agent(state: SuperBotState, config: RunnableConfig | None) -> str | None:
@@ -175,12 +183,9 @@ async def _answer_here(payload: TaskPayload, instruction: str, run_config: dict)
     can you do?", a thank-you. The conversation slice rides along, so a
     follow-up here reads the same history a specialist would have seen.
     """
-    system = get_prompt(
-        "superbot_assistant_system", _ASSISTANT_DEFAULT, name="Super Bot — Assistant"
-    )
     reply = await get_chat_model().ainvoke(
         [
-            SystemMessage(content=system),
+            SystemMessage(content=_ASSISTANT_PROMPT.get()),
             *payload["context"],
             HumanMessage(content=instruction),
         ],
@@ -252,7 +257,7 @@ async def synthesize(state: SuperBotState) -> dict:
     sections = "\n\n".join(
         f"### {r['agent_id']} ({'ok' if r['ok'] else 'failed'})\n{r['output']}" for r in ordered
     )
-    system = get_prompt("superbot_synthesis_system", _SYNTHESIS_DEFAULT, name="Super Bot — Synthesis")
+    system = _SYNTHESIS_PROMPT.get()
 
     try:
         model = get_chat_model(temperature=0)

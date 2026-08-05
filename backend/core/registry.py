@@ -17,6 +17,7 @@ from core.base_agent import AgentManifest, BaseAgent
 
 # Module paths to import. Each must expose a module-level ``MANIFEST``.
 _AGENT_MODULES = [
+    "agents.personal_assistant",
     "agents.personal_chef",
     "agents.email_agent",
     "agents.wedding_planner",

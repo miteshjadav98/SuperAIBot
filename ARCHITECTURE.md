@@ -19,6 +19,7 @@ flowchart LR
     LG --> SB
     GW --> SB[Super Bot planner/executor]
     SB --> R[(Agent registry)]
+    R --> A0[Personal Assistant]
     R --> A1[Personal Chef]
     R --> A2[Email Agent]
     R --> A3[Wedding Planner]
@@ -46,6 +47,8 @@ duality is load-bearing and explains several decisions below.
 | `core/concurrency.py` | One run at a time per `thread_id` | — |
 | `core/telemetry.py` | Per-run tokens, latency, cost | `core/db.py` |
 | `tools/email/` | Provider-agnostic mailbox (`base`/`mock`/`gmail`) | — |
+| `tools/weather/` | Provider-agnostic weather (`base`/`openmeteo`) | httpx |
+| `tools/todo/` | Provider-agnostic tasks (`base`/`internal`/`memory`) | `core/db.py` |
 | `core/prompts.py` | Prompts from Mongo, versioned, with code fallback | `core/db.py` |
 | `llm/factory.py` | Provider abstraction (`get_chat_model`) | — |
 | `tools/mcp.py` | MCP servers from config, with retry | — |

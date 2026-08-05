@@ -50,6 +50,18 @@ class Settings(BaseSettings):
     # Tools.
     tavily_api_key: Optional[str] = None
 
+    # Weather (Personal Assistant). "openmeteo" is free and needs no key or
+    # signup — see tools/weather/. A provider is one module plus one line in
+    # tools/weather/__init__.py, so OpenWeather or the weather-mcp server slot
+    # in without touching the agent.
+    weather_provider: str = "openmeteo"
+    weather_timeout_seconds: float = 8.0
+
+    # Tasks (Personal Assistant). "internal" is the built-in MongoDB list; it
+    # falls back to an in-process list when MONGODB_URI is unset. "memory"
+    # forces that in-process list. Notion/Google Tasks are documented seams.
+    todo_provider: str = "internal"
+
     # Email. "mock" is a working in-memory mailbox (no credentials needed) —
     # see tools/email/. "gmail" is a documented seam, not yet implemented.
     email_provider: str = "mock"

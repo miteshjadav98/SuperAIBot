@@ -57,6 +57,19 @@ def agent_memory_collection() -> Optional[Collection]:
     return get_db()["agent_memory"]
 
 
+def todos_collection() -> Optional[Collection]:
+    """The Personal Assistant's built-in task list — one document per task.
+
+    Indexed by owner, because every read is "this user's tasks" and the owner
+    filter is also the isolation boundary between accounts.
+    """
+    if not mongo_configured():
+        return None
+    todos = get_db()["todos"]
+    todos.create_index([("owner", 1), ("done", 1), ("due_date", 1)])
+    return todos
+
+
 def run_metrics_collection() -> Optional[Collection]:
     """One row per graph invocation — tokens, latency, cost. See
     :mod:`core.telemetry`."""

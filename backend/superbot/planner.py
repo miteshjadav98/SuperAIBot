@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from langchain_core.messages import AnyMessage
 
-from core.prompts import get_prompt
+from core.prompts import Prompt
 from core.registry import registry
 from llm.factory import get_chat_model
 from superbot.router import route
@@ -59,16 +59,29 @@ the plan, or their outputs, so never write "the above", "that flight", or \
 with no dependency between them run in parallel, which is faster — leave \
 depends_on empty whenever you can.
 - agent_id must be copied exactly from the list above. Never invent one.
-- Use a specialist only for work genuinely inside its domain. Greetings, thanks, \
-"who are you", "what can you do", chit-chat, and anything no specialist covers \
-go to "{assistant_id}" — never make a specialist answer outside its domain.
+- Use a specialist only for work genuinely inside its domain. Never make a \
+specialist answer outside its domain.
+- Send it to "{assistant_id}" when no agent above claims it: "who are you", \
+"what can you do", thanks, chit-chat, and general questions. An agent whose \
+description explicitly claims a kind of request (a greeting, say) wins over \
+this rule — read the descriptions before falling back.
 
 Routing across turns:
 {continuity}"""
 
+_SUPERVISOR_PROMPT = Prompt(
+    # A new prompt id, not an edit of the old `superbot_planner_system`:
+    # `get_prompt` seeds once and then always serves the stored version, so
+    # changing a default only reaches an environment that has never seen it.
+    # `scripts/publish_prompts.py` is how a changed default reaches the rest.
+    "superbot_supervisor_system",
+    _SYSTEM_DEFAULT,
+    name="Super Bot — Supervisor",
+)
+
 _ASSISTANT_ENTRY = (
     f"- {ASSISTANT_AGENT_ID} [general]: Super Bot answering in its own voice. "
-    "Greetings, small talk, questions about what Super Bot is or can do, "
+    "Small talk, thanks, questions about what Super Bot is or can do, "
     "follow-ups answerable from the conversation itself, and general questions "
     "none of the specialists above cover."
 )
@@ -177,16 +190,8 @@ async def make_plan(
     if not registry.ids():
         return single_task_plan(ASSISTANT_AGENT_ID, query)
 
-    # A new prompt id, not an edit of the old one: `get_prompt` seeds a prompt
-    # once and then always serves the stored version, so an already-deployed
-    # `superbot_planner_system` would have masked every change made here.
-    template = get_prompt(
-        "superbot_supervisor_system",
-        _SYSTEM_DEFAULT,
-        name="Super Bot — Supervisor",
-    )
     system = _fill(
-        template,
+        _SUPERVISOR_PROMPT.get(),
         {
             "agents": registry.catalog(),
             "assistant": _ASSISTANT_ENTRY,
