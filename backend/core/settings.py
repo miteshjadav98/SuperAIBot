@@ -68,5 +68,15 @@ class Settings(BaseSettings):
     # Super Bot router fallback when classification is uncertain.
     default_agent_id: str = "personal_chef"
 
+    # What happens when a second request arrives on a thread that is still
+    # running: "reject" (409, the default) or "enqueue" (run it after).
+    run_concurrency_policy: str = "reject"
+
+    # USD per MILLION tokens, as JSON, e.g.
+    #   {"gpt-4.1": {"input": 2.0, "output": 8.0}}
+    # Empty by default: rates depend on provider, region and contract, so
+    # tokens are always recorded but cost is only computed once you set yours.
+    model_pricing: Optional[str] = None
+
 
 settings = Settings()

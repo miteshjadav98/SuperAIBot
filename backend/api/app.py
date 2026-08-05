@@ -20,8 +20,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from core import db, memory
+from core import db, memory, telemetry
 from core.base_agent import BaseAgent
+from core.concurrency import RunBusy, thread_run
 from core.registry import registry
 from core.security import (
     create_access_token,
@@ -210,16 +211,22 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
 
     # Namespace threads by user so memory is private per account, and pass the
     # owner so the PDF RAG tool only retrieves this user's documents.
-    config = {
-        "configurable": {
-            "thread_id": f"{user['_id']}:{request.thread_id}",
-            "owner": str(user["_id"]),
-        }
-    }
+    owner = str(user["_id"])
+    thread_id = f"{owner}:{request.thread_id}"
+    config = {"configurable": {"thread_id": thread_id, "owner": owner}}
+
     try:
-        result = await graph.ainvoke(
-            {"messages": [HumanMessage(content=request.query)]}, config=config
-        )
+        # One run at a time per thread: concurrent runs share a checkpoint and
+        # would interleave their messages into a conversation that never
+        # happened.
+        async with thread_run(thread_id):
+            with telemetry.measure("chat", owner=owner, thread_id=thread_id) as metrics:
+                result = await graph.ainvoke(
+                    {"messages": [HumanMessage(content=request.query)]}, config=config
+                )
+                metrics.agent_id = agent_id or result.get("routed_to")
+    except RunBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -229,7 +236,26 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
         "routed": request.agent_id is None,
         "plan": result.get("plan"),
         "answer": getattr(last, "content", str(last)),
+        "usage": {
+            "input_tokens": metrics.input_tokens,
+            "output_tokens": metrics.output_tokens,
+            "latency_ms": metrics.latency_ms,
+            "cost_usd": metrics.cost_usd,
+        },
     }
+
+
+# --- Telemetry ---------------------------------------------------------------
+
+
+@app.get("/metrics")
+async def metrics(user: dict = Depends(get_current_user), mine: bool = True):
+    """Token, latency and cost summary over recent runs.
+
+    Scoped to the caller by default — per-user cost is the question people
+    actually ask, and it avoids exposing platform-wide volume to every account.
+    """
+    return telemetry.summary(owner=str(user["_id"]) if mine else None)
 
 
 # --- Memory ------------------------------------------------------------------
@@ -327,18 +353,21 @@ async def ask_question(request: AskRequest, user: dict = Depends(get_current_use
     if pdf_agent is None:
         raise HTTPException(status_code=503, detail="PDF chatbot is not registered.")
 
+    owner = str(user["_id"])
+    thread_id = f"{owner}:{request.thread_id}"
+    config = {"configurable": {"thread_id": thread_id, "owner": owner}}
+
     try:
-        config = {
-            "configurable": {
-                "thread_id": f"{user['_id']}:{request.thread_id}",
-                "owner": str(user["_id"]),
-            }
-        }
-        graph = _gateway_graph(pdf_agent)
-        response = await graph.ainvoke(
-            {"messages": [HumanMessage(content=request.query)]}, config=config
-        )
+        async with thread_run(thread_id):
+            with telemetry.measure("ask", owner=owner, thread_id=thread_id) as metrics:
+                metrics.agent_id = "pdf_chatbot"
+                graph = _gateway_graph(pdf_agent)
+                response = await graph.ainvoke(
+                    {"messages": [HumanMessage(content=request.query)]}, config=config
+                )
         return {"answer": response["messages"][-1].content}
+    except RunBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc))
 

@@ -57,6 +57,14 @@ def agent_memory_collection() -> Optional[Collection]:
     return get_db()["agent_memory"]
 
 
+def run_metrics_collection() -> Optional[Collection]:
+    """One row per graph invocation — tokens, latency, cost. See
+    :mod:`core.telemetry`."""
+    if not mongo_configured():
+        return None
+    return get_db()["run_metrics"]
+
+
 def usage_counters_collection() -> Optional[Collection]:
     """Small counters keyed by ``<service>:<YYYY-MM>`` — used to track the Azure
     Document Intelligence free-tier monthly page budget across restarts."""

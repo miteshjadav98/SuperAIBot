@@ -43,6 +43,8 @@ duality is load-bearing and explains several decisions below.
 | `core/store.py` | `BaseStore` over MongoDB | pymongo |
 | `core/memory.py` | Shared long-term memory + agent middleware | `core/store.py` |
 | `core/approval.py` | Declarative HITL gating for destructive tools | langchain |
+| `core/concurrency.py` | One run at a time per `thread_id` | — |
+| `core/telemetry.py` | Per-run tokens, latency, cost | `core/db.py` |
 | `tools/email/` | Provider-agnostic mailbox (`base`/`mock`/`gmail`) | — |
 | `core/prompts.py` | Prompts from Mongo, versioned, with code fallback | `core/db.py` |
 | `llm/factory.py` | Provider abstraction (`get_chat_model`) | — |
@@ -341,10 +343,14 @@ Stated plainly, because the interesting question is always what you *didn't* do.
 3. **No evaluator.** Nothing critiques a task result before it reaches the user.
    The hook is `synthesize`; the cost is latency, so it should be conditional on
    low confidence rather than run every turn.
-4. **No cost/latency telemetry.** Traces go to LangSmith, but there is no per-run
-   token or cost accounting.
-5. **Run-concurrency policy is undefined** on the gateway — two concurrent
-   requests on one `thread_id` both write to it.
+4. **Cost rates are unset by default.** `core/telemetry.py` records tokens and
+   latency for every run, but computes cost only for models listed in
+   `MODEL_PRICING` — rates vary by provider, region and contract, so shipping
+   defaults would produce confidently wrong numbers.
+5. **Run concurrency is guarded per process only.** `core/concurrency.py`
+   serialises runs on a `thread_id` within one gateway worker; multiple workers
+   or replicas would need a shared lock. Only `reject` and `enqueue` are
+   implemented — `interrupt` and `rollback` need in-flight cancellation.
 6. **Store integration tests use `mongomock`**, which does not model TTL reaping
    or unique-index enforcement. Both were verified by hand against Atlas 8.0
    (unique `(path, key)` rejects duplicates; the TTL index on `expires_at` is
