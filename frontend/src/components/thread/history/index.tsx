@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { useThreads } from "@/providers/Thread";
+import { useThreads, threadTitle } from "@/providers/Thread";
 import { Thread } from "@langchain/langgraph-sdk";
 import { useEffect } from "react";
 
@@ -12,7 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelRightOpen, PanelRightClose, LogOut } from "lucide-react";
+import { PanelRightOpen, PanelRightClose, LogOut, SquarePen } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useAuth } from "@/providers/Auth";
 import { TooltipIconButton } from "@/components/thread/tooltip-icon-button";
@@ -29,8 +29,11 @@ function ThreadList({
   return (
     <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted [&::-webkit-scrollbar-track]:bg-transparent">
       {threads.map((t) => {
-        let itemText = t.thread_id;
+        // The generated title when there is one; the first message is only the
+        // fallback, because on its own it labels every briefing thread "hello".
+        let itemText = threadTitle(t) ?? t.thread_id;
         if (
+          !threadTitle(t) &&
           typeof t.values === "object" &&
           t.values &&
           "messages" in t.values &&
@@ -60,6 +63,27 @@ function ThreadList({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Starts a fresh conversation. Clearing `threadId` is all a new chat is. */
+function NewChatButton({ onClick }: { onClick?: () => void }) {
+  const [, setThreadId] = useQueryState("threadId");
+
+  return (
+    <div className="w-full px-3">
+      <Button
+        variant="outline"
+        className="w-full justify-start gap-2 font-normal"
+        onClick={() => {
+          setThreadId(null);
+          onClick?.();
+        }}
+      >
+        <SquarePen className="size-4" />
+        New chat
+      </Button>
     </div>
   );
 }
@@ -137,7 +161,8 @@ export default function ThreadHistory() {
             Chat History
           </h1>
         </div>
-        <div className="flex min-h-0 w-full flex-1 flex-col">
+        <div className="flex min-h-0 w-full flex-1 flex-col gap-3">
+          <NewChatButton />
           {threadsLoading ? (
             <ThreadHistoryLoading />
           ) : (
@@ -163,7 +188,8 @@ export default function ThreadHistory() {
             </SheetHeader>
             {/* min-h-0 lets the list scroll within the sheet so the footer
                 (with logout) stays pinned and reachable on tall phones. */}
-            <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden px-2">
+            <div className="flex min-h-0 w-full flex-1 flex-col gap-3 overflow-hidden px-2">
+              <NewChatButton onClick={() => setChatHistoryOpen(false)} />
               <ThreadList
                 threads={threads}
                 onThreadClick={() => setChatHistoryOpen((o) => !o)}

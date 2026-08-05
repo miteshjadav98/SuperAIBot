@@ -12,19 +12,19 @@ import {
   ensureToolCallsHaveResponses,
 } from "@/lib/ensure-tool-responses";
 import { SuperBotLogoSVG } from "../icons/superbot";
-import { TooltipIconButton } from "./tooltip-icon-button";
 import {
   ArrowDown,
   LoaderCircle,
   PanelRightOpen,
   PanelRightClose,
-  SquarePen,
   XIcon,
   Plus,
 } from "lucide-react";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import ThreadHistory from "./history";
+import { useThreads } from "@/providers/Thread";
+import { getContentString } from "./utils";
 import { AgentSwitcher } from "@/components/agent-switcher";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { toast } from "sonner";
@@ -149,6 +149,30 @@ export function Thread() {
       // no-op
     }
   }, [stream.error]);
+
+  // Name the conversation once its first exchange is complete, and refresh the
+  // sidebar so the new title appears without a reload. Guarded by a ref as well
+  // as the stored title, so a re-render mid-run can't fire a second LLM call.
+  const { ensureTitle, getThreads, setThreads } = useThreads();
+  const titledThread = useRef<string | null>(null);
+  useEffect(() => {
+    if (isLoading || !threadId || messages.length < 2) return;
+    if (titledThread.current === threadId) return;
+    titledThread.current = threadId;
+
+    ensureTitle(
+      threadId,
+      messages.map((m) => ({
+        role: m.type === "human" ? "user" : "assistant",
+        content: getContentString(m.content),
+      })),
+    )
+      .then(() => getThreads().then(setThreads))
+      .catch(() => {
+        // A missing title is cosmetic — never surface it to the user.
+        titledThread.current = null;
+      });
+  }, [isLoading, threadId, messages.length]);
 
   // TODO: this should be part of the useStream hook
   const prevMessageLength = useRef(0);
@@ -386,18 +410,11 @@ export function Thread() {
                 </button>
               </div>
 
+              {/* Starting a new chat lives in the history panel, next to the
+                  conversations it creates — not duplicated up here. */}
               <div className="flex items-center gap-2 sm:gap-4">
                 <AgentSwitcher />
                 <ThemeToggle />
-                <TooltipIconButton
-                  size="lg"
-                  className="p-4"
-                  tooltip="New thread"
-                  variant="ghost"
-                  onClick={() => setThreadId(null)}
-                >
-                  <SquarePen className="size-5" />
-                </TooltipIconButton>
               </div>
 
               <div className="from-background to-background/0 absolute inset-x-0 top-full h-5 bg-gradient-to-b" />

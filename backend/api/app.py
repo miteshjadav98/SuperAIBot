@@ -23,6 +23,7 @@ from pymongo.errors import DuplicateKeyError, PyMongoError
 from core import db, memory, telemetry
 from core.base_agent import BaseAgent
 from core.concurrency import RunBusy, thread_run
+from core.prompts import get_prompt
 from core.registry import registry
 from core.security import (
     create_access_token,
@@ -31,6 +32,7 @@ from core.security import (
     verify_password,
 )
 from core.settings import settings
+from llm.factory import get_chat_model
 
 app = FastAPI(title="SuperBot Platform API")
 
@@ -243,6 +245,60 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
             "cost_usd": metrics.cost_usd,
         },
     }
+
+
+# --- Conversation titles ------------------------------------------------------
+
+
+class TitleMessage(BaseModel):
+    role: str
+    content: str
+
+
+class TitleRequest(BaseModel):
+    messages: list[TitleMessage]
+
+
+_TITLE_DEFAULT = """Write a title for this conversation: 3-6 words, no quotes, \
+no trailing punctuation, capitalised like a headline.
+
+Name what the conversation is *about*, not how it opened. A chat that starts \
+"good morning" and becomes a daily briefing is "Monday Morning Briefing", never \
+"Good Morning". If there is genuinely no subject yet, answer "New Chat"."""
+
+_TITLE_FALLBACK = "New Chat"
+_TITLE_MAX_CHARS = 60
+
+
+@app.post("/threads/title")
+async def thread_title(request: TitleRequest, user: dict = Depends(get_current_user)):
+    """A short, human title for a conversation.
+
+    The chat list used to show the first message, which made every briefing
+    thread read "hello". The caller stores the result on the thread, so this
+    runs once per conversation rather than once per render.
+    """
+    transcript = "\n".join(
+        f"{m.role}: {m.content[:500]}" for m in request.messages[:6] if m.content.strip()
+    )
+    if not transcript:
+        return {"title": _TITLE_FALLBACK}
+
+    system = get_prompt("chat_title_system", _TITLE_DEFAULT, name="Chat Title")
+    try:
+        model = get_chat_model(temperature=0, max_tokens=24)
+        answer = await model.ainvoke(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": transcript},
+            ]
+        )
+        title = str(answer.content).strip().strip('"').strip()
+    except Exception as exc:  # noqa: BLE001 — a title is never worth a 500
+        print(f"[title] generation failed: {exc}")
+        return {"title": _TITLE_FALLBACK}
+
+    return {"title": title[:_TITLE_MAX_CHARS] or _TITLE_FALLBACK}
 
 
 # --- Telemetry ---------------------------------------------------------------
