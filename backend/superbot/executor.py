@@ -112,9 +112,18 @@ def fan_out(state: SuperBotState) -> list[Send] | str:
 
     context = state["messages"][-CONTEXT_MESSAGES:-1]
     completed = {r["task_id"]: r["output"] for r in state.get("results") or [] if r["ok"]}
+    solo = len(state.get("plan") or []) == 1
 
     return [
-        Send("execute", TaskPayload(task=task, context=context, upstream=_upstream(task, completed)))
+        Send(
+            "execute",
+            TaskPayload(
+                task=task,
+                context=context,
+                upstream=_upstream(task, completed),
+                solo=solo,
+            ),
+        )
         for task in ready
     ]
 
@@ -145,10 +154,19 @@ async def execute(payload: TaskPayload, config: RunnableConfig | None = None) ->
     if payload.get("upstream"):
         instruction = f"{instruction}\n\nUse this information from an earlier step:\n{payload['upstream']}"
 
+    # Streaming policy. A one-task plan short-circuits synthesis, so this
+    # agent's tokens *are* the final answer and must reach the UI. With several
+    # agents running at once, streaming them all would interleave two
+    # half-written answers, so they are silenced and only `synthesize` streams.
+    # Suppressed either way in the UI only — LangSmith still records everything.
+    run_config = dict(config or {})
+    if not payload.get("solo", True):
+        run_config["tags"] = [*run_config.get("tags", []), "langsmith:nostream"]
+
     try:
         result = await agent.invoke(
             {"messages": [*payload["context"], HumanMessage(content=instruction)]},
-            config=config,
+            config=run_config,
         )
         messages = result.get("messages") or []
         output = getattr(messages[-1], "content", "") if messages else ""

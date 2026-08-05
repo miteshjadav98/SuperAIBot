@@ -274,6 +274,44 @@ The platform already authenticates users, so a second weaker login was redundant
 
 ---
 
+## 5b. What the UI shows
+
+The chat renders **no tool calls and no tool results**. An agent chat that
+prints every tool invocation reads like a debug log, and the raw JSON is not
+what a user is there for. The full step-by-step trace goes to LangSmith, which
+is the right place for it.
+
+What replaces it is the **execution graph**: the plan, rendered as layers, with
+live per-task status. Tasks in the same row ran at the same time. It only
+appears for plans of two or more tasks — for a single-agent request there is
+nothing to show that the answer does not already say.
+
+One exception: a tool message carrying an **approval interrupt** still renders,
+or human-in-the-loop would become unresumable from the UI.
+
+### Streaming policy
+
+`streamMode: ["values", "messages"]`. `values` alone delivers one state
+snapshot per superstep, so the answer arrives in blocks; adding `messages`
+streams tokens.
+
+That raises a question a single-agent app never has to answer: *whose* tokens?
+Three model calls can be in flight in one run.
+
+| Call | Streams? | Why |
+|---|---|---|
+| Planner | No | Emits structured JSON — would spray a half-built object into the chat |
+| Router (fallback) | No | Same |
+| Agent, single-task plan | **Yes** | Synthesis is skipped, so these tokens *are* the answer |
+| Agent, multi-task plan | No | Two agents at once would interleave two half-written answers |
+| `synthesize` | **Yes** | The merged final answer |
+
+Suppression uses the `langsmith:nostream` tag, decided per run from the
+`solo` flag in the `Send` payload. It hides tokens from the *UI only* —
+LangSmith still records every call.
+
+---
+
 ## 6. Request lifecycle
 
 `POST /chat` — *"Recommend a sci-fi film and a dinner with chicken and rice"*

@@ -30,8 +30,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { toast } from "sonner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "../ui/label";
-import { Switch } from "../ui/switch";
 import { useFileUpload } from "@/hooks/use-file-upload";
+import { ExecutionGraph } from "./execution-graph";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
 import { ingestPdfBlock, isPdfBlock } from "@/lib/multimodal-utils";
 import { useAuth } from "@/providers/Auth";
@@ -92,10 +92,6 @@ export function Thread() {
   const { token } = useAuth();
   const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
     "chatHistoryOpen",
-    parseAsBoolean.withDefault(false),
-  );
-  const [hideToolCalls, setHideToolCalls] = useQueryState(
-    "hideToolCalls",
     parseAsBoolean.withDefault(false),
   );
   const [input, setInput] = useState("");
@@ -268,7 +264,7 @@ export function Thread() {
     stream.submit(
       { messages: [...toolMessages, newHumanMessage], context },
       {
-        streamMode: ["values"],
+        streamMode: ["values", "messages"],
         streamSubgraphs: true,
         streamResumable: true,
         optimisticValues: (prev) => ({
@@ -295,7 +291,7 @@ export function Thread() {
     setFirstTokenReceived(false);
     stream.submit(undefined, {
       checkpoint: parentCheckpoint,
-      streamMode: ["values"],
+      streamMode: ["values", "messages"],
       streamSubgraphs: true,
       streamResumable: true,
     });
@@ -446,6 +442,14 @@ export function Thread() {
                       handleRegenerate={handleRegenerate}
                     />
                   )}
+                  {/* What the Super Bot actually did: which agents ran, what
+                      was parallel, what failed. Replaces raw tool-call noise —
+                      the full trace lives in LangSmith. */}
+                  <ExecutionGraph
+                    plan={stream.values?.plan}
+                    results={stream.values?.results}
+                    isLoading={isLoading}
+                  />
                   {isLoading && !firstTokenReceived && (
                     <AssistantMessageLoading />
                   )}
@@ -503,21 +507,6 @@ export function Thread() {
                       />
 
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-2 pt-4 sm:gap-6">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <Switch
-                              id="render-tool-calls"
-                              checked={hideToolCalls ?? false}
-                              onCheckedChange={setHideToolCalls}
-                            />
-                            <Label
-                              htmlFor="render-tool-calls"
-                              className="text-sm text-muted-foreground"
-                            >
-                              Hide Tool Calls
-                            </Label>
-                          </div>
-                        </div>
                         <Label
                           htmlFor="file-input"
                           className="flex cursor-pointer items-center gap-2"

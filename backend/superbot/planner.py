@@ -121,7 +121,13 @@ async def make_plan(query: str, messages: list[AnyMessage]) -> list[Task]:
     user = f"Conversation so far:\n{history}\n\nRequest: {query}" if history else query
 
     try:
-        model = get_chat_model(temperature=0).with_structured_output(Plan)
+        # `langsmith:nostream` keeps the planner's tokens out of the UI stream.
+        # It emits structured JSON, so streaming it would spray a half-built
+        # object into the chat before any agent has run. It still appears in
+        # LangSmith traces — this hides it from the user, not from you.
+        model = get_chat_model(temperature=0).with_structured_output(Plan).with_config(
+            tags=["langsmith:nostream"]
+        )
         plan: Plan = await model.ainvoke(
             [{"role": "system", "content": system}, {"role": "user", "content": user}]
         )

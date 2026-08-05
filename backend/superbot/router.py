@@ -39,7 +39,12 @@ async def route(query: str, *, confidence_floor: float = 0.35) -> str:
     if not valid_ids:
         return settings.default_agent_id
 
-    model = get_chat_model(temperature=0).with_structured_output(RouteDecision)
+    # Structured output, so keep its tokens out of the UI stream (see planner).
+    model = (
+        get_chat_model(temperature=0)
+        .with_structured_output(RouteDecision)
+        .with_config(tags=["langsmith:nostream"])
+    )
     prompt = _SYSTEM.format(
         agents=registry.descriptions(), default=settings.default_agent_id
     )

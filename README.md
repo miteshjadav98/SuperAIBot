@@ -1,9 +1,9 @@
 # 🤖 SuperBot — Plug-and-Play AI Agent Platform
 
 A plug-and-play AI agent platform: one chat UI (branded **SuperBot**), a
-dropdown, and a **Super Bot** router that auto-routes each message to the right
-agent. Pick a specific agent to talk to it directly, or pick **🤖 Super Bot
-(Auto)** and let the LLM router choose. Sign in with email + password — every
+dropdown, and a **Super Bot** planner that breaks each message into a task DAG
+and runs the right agents — in parallel where it can. Pick a specific agent to
+talk to it directly, or pick **🤖 Super Bot (Auto)** and let the planner decide. Sign in with email + password — every
 user gets their own private chat history.
 
 > **[ARCHITECTURE.md](ARCHITECTURE.md)** — the design walkthrough: why a planner
@@ -16,6 +16,7 @@ Each agent doubles as a worked example of an agent-engineering concept:
 | --- | --- |
 | **Planner–executor orchestration** | `superbot` graph — request → validated task DAG → agents → merged answer |
 | **Parallel fan-out / fan-in (map-reduce)** | `superbot/executor.py` — `Send` per ready task, results merged through a reducer |
+| **Live execution graph** | `frontend/.../execution-graph.tsx` - renders the task DAG with per-task status |
 | **Capability registry** | `core/registry.py` — agents self-declare `capabilities`; planner and lookups read them |
 | **Long-term memory (cross-agent)** | `core/store.py` + `core/memory.py` — a Mongo `BaseStore`, injected into every agent by middleware |
 | **Multi-agent coordinator (agents-as-tools)** | Wedding Planner — flights (MCP) + venues (search) + SQL playlist |
@@ -55,6 +56,11 @@ backend/
 │  ├─ settings.py     # one pydantic-settings singleton (reads ../.env)
 │  ├─ base_agent.py   # BaseAgent contract + AgentManifest
 │  ├─ registry.py     # AgentRegistry — the source of truth for which agents exist
+│  ├─ store.py        # MongoDB-backed LangGraph BaseStore (long-term memory)
+│  ├─ memory.py       # shared cross-agent memory + MemoryMiddleware
+│  ├─ approval.py     # @requires_approval — declarative HITL for risky tools
+│  ├─ concurrency.py  # one run at a time per thread_id
+│  ├─ telemetry.py    # per-run tokens, latency, cost
 │  ├─ lg_auth.py      # LangGraph JWT auth — isolates chats & PDFs per user
 │  └─ prompts.py      # loads agent prompts from Mongo (versioned; see Prompt management)
 ├─ llm/
@@ -62,12 +68,8 @@ backend/
 ├─ agents/            # each file exposes `agent` (compiled graph) + MANIFEST
 ├─ tools/
 │  ├─ mcp.py          # get_mcp_tools() — shared MCP loader + retry interceptor
-│  └─ mcp_servers.json# MCP servers, keyed by name (add a server here)
-├─ core/
-│  ├─ store.py        # MongoDB-backed LangGraph BaseStore (long-term memory)
-│  ├─ memory.py       # shared cross-agent memory + MemoryMiddleware
-│  └─ approval.py     # @requires_approval — declarative HITL for risky tools
-├─ tools/email/       # EmailProvider protocol + mock mailbox + Gmail seam
+│  ├─ mcp_servers.json# MCP servers, keyed by name (add a server here)
+│  └─ email/          # EmailProvider protocol + mock mailbox + Gmail seam
 ├─ tests/             # `cd backend && pytest` — hermetic, no DB or network
 ├─ superbot/
 │  ├─ state.py        # state schema + reducers (the contract between nodes)
@@ -119,7 +121,7 @@ and remove anything stored about them. Details and rationale in
 ## Tests
 
 ```bash
-cd backend && pytest        # 39 tests, ~12s, no database and no network
+cd backend && pytest        # 83 tests, ~13s, no database and no network
 ```
 
 `mongomock` backs the store tests, so the MongoDB `BaseStore` runs against a real

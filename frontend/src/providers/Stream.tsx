@@ -20,7 +20,20 @@ import { useAuth } from "./Auth";
 import { toast } from "sonner";
 import { DEFAULT_AGENT } from "@/components/agent-switcher";
 
-export type StateType = { messages: Message[]; ui?: UIMessage[] };
+import type { Task, TaskResult } from "@/components/thread/execution-graph";
+
+/**
+ * `plan`/`results` come from the Super Bot graph's state (`superbot/state.py`).
+ * They are absent when talking to a single agent directly, which is why both
+ * are optional.
+ */
+export type StateType = {
+  messages: Message[];
+  ui?: UIMessage[];
+  plan?: Task[] | null;
+  results?: TaskResult[] | null;
+  routed_to?: string | null;
+};
 
 const useTypedStream = useStream<
   StateType,

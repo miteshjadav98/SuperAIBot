@@ -90,6 +90,21 @@ def test_fan_out_passes_dependency_output_downstream(diamond):
     assert sends[0].arg["upstream"] == "out-t1\n\nout-t2"
 
 
+def test_solo_flag_marks_a_single_task_plan_as_streamable():
+    """A one-task plan skips synthesis, so that agent's tokens are the final
+    answer and must reach the UI."""
+    sends = fan_out({"messages": [], "plan": [task("t1")], "results": [], "layers": 1})
+
+    assert sends[0].arg["solo"] is True
+
+
+def test_solo_is_false_when_several_agents_run(diamond):
+    """Streaming two agents at once would interleave two half-written answers."""
+    sends = fan_out({"messages": [], "plan": diamond, "results": [], "layers": 1})
+
+    assert all(s.arg["solo"] is False for s in sends)
+
+
 def test_fan_out_stops_at_the_layer_cap(diamond):
     """Bound on the dispatch->execute loop, independent of plan shape."""
     state = {"messages": [], "plan": diamond, "results": [], "layers": 99}

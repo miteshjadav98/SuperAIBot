@@ -94,6 +94,11 @@ class TaskPayload(TypedDict):
     task: Task
     context: list
     upstream: str  # outputs of this task's dependencies, inlined into its prompt
+    solo: bool
+    """True when this is the only task in the plan, so its tokens are the final
+    answer and should stream straight to the UI. False when several agents run:
+    their output is merged by ``synthesize``, and streaming them all would
+    interleave two half-finished answers in the chat."""
 
 
 class SuperBotState(MessagesState):
