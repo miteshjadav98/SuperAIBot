@@ -6,6 +6,10 @@ agent. Pick a specific agent to talk to it directly, or pick **🤖 Super Bot
 (Auto)** and let the LLM router choose. Sign in with email + password — every
 user gets their own private chat history.
 
+> **[ARCHITECTURE.md](ARCHITECTURE.md)** — the design walkthrough: why a planner
+> instead of an agent-of-agents, how the parallel DAG is bounded, the memory
+> model, the decision log, and the known gaps.
+
 Each agent doubles as a worked example of an agent-engineering concept:
 
 | Concept | Where to look |
@@ -13,6 +17,7 @@ Each agent doubles as a worked example of an agent-engineering concept:
 | **Planner–executor orchestration** | `superbot` graph — request → validated task DAG → agents → merged answer |
 | **Parallel fan-out / fan-in (map-reduce)** | `superbot/executor.py` — `Send` per ready task, results merged through a reducer |
 | **Capability registry** | `core/registry.py` — agents self-declare `capabilities`; planner and lookups read them |
+| **Long-term memory (cross-agent)** | `core/store.py` + `core/memory.py` — a Mongo `BaseStore`, injected into every agent by middleware |
 | **Multi-agent coordinator (agents-as-tools)** | Wedding Planner — flights (MCP) + venues (search) + SQL playlist |
 | **RAG (retrieval-augmented generation)** | PDF Chatbot — chunk → embed → Atlas Vector Search → grounded answers |
 | **Single agent, multiple tools** | Personal Chef / Movie Recommender — `create_agent` + web search tools |
@@ -56,6 +61,10 @@ backend/
 ├─ tools/
 │  ├─ mcp.py          # get_mcp_tools() — shared MCP loader + retry interceptor
 │  └─ mcp_servers.json# MCP servers, keyed by name (add a server here)
+├─ core/
+│  ├─ store.py        # MongoDB-backed LangGraph BaseStore (long-term memory)
+│  └─ memory.py       # shared cross-agent memory + MemoryMiddleware
+├─ tests/             # `cd backend && pytest` — hermetic, no DB or network
 ├─ superbot/
 │  ├─ state.py        # state schema + reducers (the contract between nodes)
 │  ├─ planner.py      # request → validated task DAG
@@ -85,6 +94,32 @@ answer verbatim — no extra synthesis call. Guardrails: at most `MAX_TASKS` tas
 `MAX_LAYERS` dispatch rounds per run, two attempts per task, and a failing agent is
 recorded as a failed task rather than aborting the others. If planning itself fails,
 the run degrades to the single-agent classifier in `superbot/router.py`.
+
+**Memory:** every agent shares one long-term memory, scoped to the signed-in
+user. When the model learns something durable it calls `remember`; on every later
+turn — in any thread, through **any** agent — those facts are injected into the
+system prompt. Tell the 🍳 Personal Chef you're vegetarian, and the 🎬 Movie
+Recommender knows tomorrow.
+
+```python
+# That's the whole integration, per agent:
+agent = create_agent(model, tools=[...], middleware=[MemoryMiddleware()])
+```
+
+The namespace comes only from authenticated identity, never from model output —
+so memory cannot leak across accounts, and with no signed-in user it is disabled
+rather than pooled. `GET /memories` and `DELETE /memories/{key}` let a user see
+and remove anything stored about them. Details and rationale in
+[ARCHITECTURE.md §4](ARCHITECTURE.md#4-memory).
+
+## Tests
+
+```bash
+cd backend && pytest        # 39 tests, ~12s, no database and no network
+```
+
+`mongomock` backs the store tests, so the MongoDB `BaseStore` runs against a real
+pymongo API surface without Atlas or Docker.
 
 ## Adding an agent (the plug-and-play recipe)
 

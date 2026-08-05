@@ -369,10 +369,13 @@ from langchain.agents import create_agent
 # API server (via langgraph.json) the platform provides persistence itself, and
 # it rejects any graph that ships its own checkpointer (GraphLoadError). Every
 # other agent on the platform follows the same rule, so PDF Chatbot does too.
+from core.memory import MemoryMiddleware
+
 agent = create_agent(
     model=azure_model,
     tools=[ask_pdf_knowledge_base],
     system_prompt=system_prompt,
+    middleware=[MemoryMiddleware()],  # shared cross-agent long-term memory
 )
 
 from core.base_agent import AgentManifest

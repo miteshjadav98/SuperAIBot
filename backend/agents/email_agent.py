@@ -10,6 +10,7 @@ from typing import Callable, Awaitable
 
 load_dotenv()
 
+from core.memory import MemoryMiddleware, remember
 from llm.factory import get_chat_model
 
 azure_model = get_chat_model()
@@ -73,7 +74,10 @@ async def dynamic_tool_call(
     authenticated = request.state.get("authenticated")
 
     if authenticated:
-        tools = [check_inbox, send_email]
+        # `remember` is listed explicitly because this override replaces the
+        # tool list wholesale — anything omitted here is invisible to the model,
+        # including tools contributed by other middleware.
+        tools = [check_inbox, send_email, remember]
     else:
         tools = [authenticate]
 
@@ -112,6 +116,7 @@ agent = create_agent(
         state_schema=AuthenticatedState,
         context_schema=EmailContext,
         middleware=[
+            MemoryMiddleware(),  # shared cross-agent long-term memory
             dynamic_tool_call,
             dynamic_prompt_func,
             HumanInTheLoopMiddleware(

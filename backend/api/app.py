@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from core import db
+from core import db, memory
 from core.base_agent import BaseAgent
 from core.registry import registry
 from core.security import (
@@ -230,6 +230,26 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
         "plan": result.get("plan"),
         "answer": getattr(last, "content", str(last)),
     }
+
+
+# --- Memory ------------------------------------------------------------------
+# Long-term memory is user-visible and user-deletable by design: it is the
+# cheapest and most trustworthy correction mechanism for a memory that is wrong,
+# stale, or simply unwelcome — and increasingly a compliance expectation.
+
+
+@app.get("/memories")
+async def get_memories(user: dict = Depends(get_current_user)):
+    """Everything the platform remembers about the signed-in user."""
+    return {"memories": memory.list_memories(str(user["_id"]))}
+
+
+@app.delete("/memories/{key}")
+async def delete_memory(key: str, user: dict = Depends(get_current_user)):
+    """Delete one memory. Removal is real, not a soft flag."""
+    if not memory.forget(str(user["_id"]), key):
+        raise HTTPException(status_code=503, detail="Memory store is unavailable.")
+    return {"deleted": key}
 
 
 # --- PDF RAG (moved from main.py) -------------------------------------------

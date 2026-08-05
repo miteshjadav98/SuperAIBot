@@ -49,6 +49,14 @@ def pdf_chunks_collection() -> Optional[Collection]:
     return get_db()["pdf_chunks"]
 
 
+def agent_memory_collection() -> Optional[Collection]:
+    """Backing collection for :class:`core.store.MongoDBStore` — the platform's
+    long-term memory, shared by every agent."""
+    if not mongo_configured():
+        return None
+    return get_db()["agent_memory"]
+
+
 def usage_counters_collection() -> Optional[Collection]:
     """Small counters keyed by ``<service>:<YYYY-MM>`` — used to track the Azure
     Document Intelligence free-tier monthly page budget across restarts."""

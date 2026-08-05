@@ -38,11 +38,13 @@ system_prompt = get_prompt(
 )
 
 from langchain.agents import create_agent
+from core.memory import MemoryMiddleware
 
 agent = create_agent(
     model=azure_model,
     tools=[web_search],
     system_prompt=system_prompt,
+    middleware=[MemoryMiddleware()],  # shared cross-agent long-term memory
 )
 
 from core.base_agent import AgentManifest

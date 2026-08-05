@@ -186,10 +186,16 @@ def update_state(origin: str, destination: str, guest_count: str, genre: str, we
         )
 
 # --- MAIN AGENT ---
+# Only the coordinator gets memory: the sub-agents above are invoked as tools
+# with a synthesised instruction, not by the user, so there is nothing personal
+# for them to learn and injecting memories into all four would be wasted tokens.
+from core.memory import MemoryMiddleware
+
 agent = create_agent(
     model=azure_model,
     tools=[search_flights, search_venues, suggest_playlist, update_state],
     state_schema=WeddingState,
+    middleware=[MemoryMiddleware()],
     system_prompt=get_prompt(
         "wedding_coordinator_system",
         """

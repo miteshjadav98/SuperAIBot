@@ -52,3 +52,10 @@ flashrank   # local cross-encoder reranker (small ONNX model, no API key)
 bcrypt
 PyJWT
 email-validator  # pydantic EmailStr
+
+# Tests (`cd backend && pytest`). mongomock lets the MongoDB-backed Store run
+# against a real pymongo API surface without a database, so the suite is
+# hermetic — no Atlas, no Docker, no network.
+pytest
+pytest-asyncio
+mongomock

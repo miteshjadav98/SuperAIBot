@@ -53,10 +53,13 @@ system_prompt = get_prompt(
     name="Movie Recommender — System Prompt",
 )
 
+from core.memory import MemoryMiddleware
+
 agent = create_agent(
     model=model,
     tools=[search_movies],
     system_prompt=system_prompt,
+    middleware=[MemoryMiddleware()],  # shared cross-agent long-term memory
 )
 
 from core.base_agent import AgentManifest
