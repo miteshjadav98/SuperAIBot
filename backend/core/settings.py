@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     # Tools.
     tavily_api_key: Optional[str] = None
 
+    # Email. "mock" is a working in-memory mailbox (no credentials needed) —
+    # see tools/email/. "gmail" is a documented seam, not yet implemented.
+    email_provider: str = "mock"
+    email_address: Optional[str] = None  # the mailbox owner's own address
+    gmail_client_id: Optional[str] = None
+    gmail_client_secret: Optional[str] = None
+
     # MongoDB Atlas (users, PDF vector search, gateway chat memory).
     mongodb_uri: Optional[str] = None
     mongodb_db: str = "superbot"

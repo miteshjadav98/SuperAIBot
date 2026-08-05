@@ -42,6 +42,8 @@ duality is load-bearing and explains several decisions below.
 | `core/base_agent.py` | The agent contract (`AgentManifest`) | — |
 | `core/store.py` | `BaseStore` over MongoDB | pymongo |
 | `core/memory.py` | Shared long-term memory + agent middleware | `core/store.py` |
+| `core/approval.py` | Declarative HITL gating for destructive tools | langchain |
+| `tools/email/` | Provider-agnostic mailbox (`base`/`mock`/`gmail`) | — |
 | `core/prompts.py` | Prompts from Mongo, versioned, with code fallback | `core/db.py` |
 | `llm/factory.py` | Provider abstraction (`get_chat_model`) | — |
 | `tools/mcp.py` | MCP servers from config, with retry | — |
@@ -218,7 +220,59 @@ real, not a soft flag.
 
 ---
 
-## 5. Request lifecycle
+## 5. Approvals and the email agent
+
+### 5.1 Risk is declared on the tool, not in the agent
+
+Approval used to be a hand-maintained map inside the agent
+(`interrupt_on={"send_email": True, ...}`). That put the safety property in the
+wiring rather than on the dangerous thing, so it had to be edited every time a
+tool was added — and failed *open* when someone forgot.
+
+Now a tool declares itself:
+
+```python
+@requires_approval(describe=lambda a: f"Send an email\n\nTo: {a['to']}\n...")
+@tool
+async def send_email(to: str, subject: str, body: str, runtime: ToolRuntime) -> str:
+```
+
+and the agent asks for a policy over whatever tools it has:
+`approval_middleware(TOOLS)`. Add a destructive tool later and it is gated
+automatically. Nothing is marked by default, so forgetting to *unmark*
+something costs an extra prompt, not an unwanted send.
+
+`describe` matters more than it looks: an approval prompt showing the full
+proposed email is reviewable; a raw JSON blob trains people to click approve.
+Read-only tools are never gated — approval fatigue is a real failure mode.
+
+Built on LangChain's `HumanInTheLoopMiddleware`, not a replacement for it: the
+interrupt/resume mechanics stay upstream, and this layer only decides *which*
+tools are gated and how the request reads.
+
+### 5.2 Provider abstraction
+
+The agent knows only `EmailProvider` (`tools/email/base.py`). Ids are opaque
+strings, expected failures raise `EmailError` and reach the model as recoverable
+text, and methods are synchronous because every real client library is.
+
+`MockEmailProvider` is the default and is a *real mailbox* — sending appends to
+Sent, archiving removes from the inbox but stays searchable, replying threads
+onto the original. That is what makes the agent testable without credentials;
+the previous `check_inbox()` returned a string literal, so no tool could observe
+any other tool's effect and "it works" was unfalsifiable.
+
+Mailboxes are cached per authenticated user, for the same reason memory
+namespaces are: one shared instance would show one user another's mail.
+
+**In-chat authentication was deleted.** The agent used to ask for an email and
+password and compare them to a dataclass holding `password = "password123"`.
+The platform already authenticates users, so a second weaker login was redundant
+*and* taught users to type credentials into a chat box.
+
+---
+
+## 6. Request lifecycle
 
 `POST /chat` — *"Recommend a sci-fi film and a dinner with chicken and rice"*
 
@@ -236,7 +290,7 @@ found nothing left). A single-agent request skips steps 3 and 7's cost: ~7s.
 
 ---
 
-## 6. Guardrails
+## 7. Guardrails
 
 Every one exists because the alternative is unbounded.
 
@@ -257,7 +311,7 @@ synthesis failure returns the raw task results rather than losing completed work
 
 ---
 
-## 7. Decision log
+## 8. Decision log
 
 | Decision | Chosen | Rejected | Would revisit if |
 |---|---|---|---|
@@ -273,7 +327,7 @@ synthesis failure returns the raw task results rather than losing completed work
 
 ---
 
-## 8. Known gaps
+## 9. Known gaps
 
 Stated plainly, because the interesting question is always what you *didn't* do.
 
@@ -281,9 +335,9 @@ Stated plainly, because the interesting question is always what you *didn't* do.
    selected directly. An `interrupt()` inside a fanned-out worker propagates to
    the *parent* Super Bot run, so resuming targets the parent thread. This
    predates v2 and is part of the email refactor.
-2. **The Email Agent is a demo.** Hardcoded inbox contents, a plaintext password
-   in a dataclass, and if/else tool gating. It needs a provider abstraction and
-   generic approval middleware.
+2. **The Gmail provider is a stub.** `tools/email/gmail.py` documents exactly
+   what to build and fails loudly; the mock provider is the working default.
+   Shipping untested Gmail API calls would be worse than an honest gap.
 3. **No evaluator.** Nothing critiques a task result before it reaches the user.
    The hook is `synthesize`; the cost is latency, so it should be conditional on
    low confidence rather than run every turn.

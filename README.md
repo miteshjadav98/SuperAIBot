@@ -21,14 +21,16 @@ Each agent doubles as a worked example of an agent-engineering concept:
 | **Multi-agent coordinator (agents-as-tools)** | Wedding Planner — flights (MCP) + venues (search) + SQL playlist |
 | **RAG (retrieval-augmented generation)** | PDF Chatbot — chunk → embed → Atlas Vector Search → grounded answers |
 | **Single agent, multiple tools** | Personal Chef / Movie Recommender — `create_agent` + web search tools |
-| **Human-in-the-loop interrupts** | Email Agent — approval before any send |
+| **Human-in-the-loop interrupts** | Email Agent — approval before anything is sent or destroyed |
+| **Declarative approval policy** | `core/approval.py` — tools mark *themselves* destructive; the gate is derived |
+| **Provider abstraction** | `tools/email/` — one protocol, a working mock, a documented Gmail seam |
 | **MCP tool loading** | `tools/mcp.py` + `mcp_servers.json` — remote/stdio tool servers |
 
 | Agent | What it does |
 | --- | --- |
 | 🤖 **Super Bot (Auto)** | Planner/orchestrator — breaks your message into a task DAG, runs independent tasks across the agents below **in parallel**, and merges the results into one answer. |
 | 🍳 **Personal Chef** | Suggests recipes from your leftover ingredients (web search via Tavily). |
-| ✉️ **Email Agent** | Authenticates, reads an inbox, and sends email — with **human-in-the-loop approval** before anything is sent. |
+| ✉️ **Email Agent** | Searches and reads mail, looks up contacts, drafts, replies, archives and trashes — with **human-in-the-loop approval** before anything is sent or destroyed. Runs on a built-in mock mailbox out of the box (no credentials); swap providers with `EMAIL_PROVIDER`. |
 | 💍 **Wedding Planner** | Multi-agent coordinator: flights (remote MCP), venues (web search), and a playlist (SQL over `Chinook.db`). |
 | 📄 **PDF Chatbot** | RAG over PDFs — **attach a PDF in the chat** (or `POST /upload`) and ask about it. MongoDB Atlas Vector Search-backed, with **per-user document isolation** (you only ever retrieve your own uploads). |
 | 🎬 **Movie Recommender** | Suggests films from your taste (web search). The reference example for adding an agent. |
@@ -63,7 +65,9 @@ backend/
 │  └─ mcp_servers.json# MCP servers, keyed by name (add a server here)
 ├─ core/
 │  ├─ store.py        # MongoDB-backed LangGraph BaseStore (long-term memory)
-│  └─ memory.py       # shared cross-agent memory + MemoryMiddleware
+│  ├─ memory.py       # shared cross-agent memory + MemoryMiddleware
+│  └─ approval.py     # @requires_approval — declarative HITL for risky tools
+├─ tools/email/       # EmailProvider protocol + mock mailbox + Gmail seam
 ├─ tests/             # `cd backend && pytest` — hermetic, no DB or network
 ├─ superbot/
 │  ├─ state.py        # state schema + reducers (the contract between nodes)
