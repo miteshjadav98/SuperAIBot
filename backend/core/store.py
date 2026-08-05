@@ -101,6 +101,12 @@ class MongoDBStore(BaseStore):
     rather than blocking the event loop on an Atlas round-trip.
     """
 
+    supports_ttl = True
+    """Declared capability, not decoration: ``BaseStore.put`` raises
+    ``NotImplementedError`` for any ``ttl=`` unless a subclass opts in. Expiry
+    is handled by a Mongo TTL index on ``expires_at``, so the database reaps
+    expired items and we run no sweeper job."""
+
     def __init__(self, collection):
         self._collection = collection
         self._ensure_indexes()

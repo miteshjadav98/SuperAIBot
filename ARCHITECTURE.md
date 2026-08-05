@@ -292,4 +292,6 @@ Stated plainly, because the interesting question is always what you *didn't* do.
 5. **Run-concurrency policy is undefined** on the gateway — two concurrent
    requests on one `thread_id` both write to it.
 6. **Store integration tests use `mongomock`**, which does not model TTL reaping
-   or unique-index enforcement. Those two behaviours are unverified.
+   or unique-index enforcement. Both were verified by hand against Atlas 8.0
+   (unique `(path, key)` rejects duplicates; the TTL index on `expires_at` is
+   created and stamped) but nothing in CI covers them.

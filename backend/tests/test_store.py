@@ -88,6 +88,16 @@ def test_list_namespaces(store):
     assert store.list_namespaces(max_depth=1) == [("memories",)]
 
 
+def test_ttl_is_declared_and_stamped(store):
+    """Regression: BaseStore.put() rejects any ttl= unless the subclass sets
+    supports_ttl, so the flag is load-bearing and easy to lose in a refactor.
+    (Actual reaping is Mongo's job and is verified against a real server, not
+    mongomock, which does not model TTL indexes.)"""
+    store.put(NS, "k", {"text": "expires"}, ttl=1)
+
+    assert store.get(NS, "k") is not None
+
+
 async def test_async_api(store):
     await store.aput(NS, "k1", {"text": "written async"})
 
