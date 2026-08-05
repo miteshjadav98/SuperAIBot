@@ -27,6 +27,8 @@ If you're skimming the code, these are the parts worth opening:
 | **Planner over agent-of-agents** | [`superbot/planner.py`](backend/superbot/planner.py) | An agent loop is unbounded by construction. The planner emits a *fixed, inspectable* DAG up front — one LLM call, then deterministic scheduling. |
 | **Cycles are unrepresentable** | [`planner._validate`](backend/superbot/planner.py) | Dependencies may only point *backwards*. That one rule kills forward refs and cycles, so the scheduler can't deadlock on a bad plan — no cycle detection needed. |
 | **Parallel fan-out via `Send`** | [`superbot/executor.py`](backend/superbot/executor.py) | N workers write `results` in the same superstep, which forces a reducer. Get that wrong and LangGraph raises `InvalidUpdateError`. |
+| **A reducer a `None` write resets** | [`superbot/state.py`](backend/superbot/state.py) | State is checkpointed per *thread*, but task ids restart at `t1` each *turn*. With plain `operator.add`, last turn's results made this turn's tasks look done — and the bot replayed its previous answer forever. |
+| **The platform writes the facts it depends on** | [`agents/personal_assistant.py`](backend/agents/personal_assistant.py) | Asked to remember "Ahmedabad", a live model instead saved *"does not know user's city; must ask city before briefing"* — into the store every agent reads. Anything code later reads back is written by code. |
 | **A hand-written Mongo `BaseStore`** | [`core/store.py`](backend/core/store.py) | LangGraph ships no Mongo store. Adding Postgres for memory alone would mean a second datastore to operate. |
 | **Deliberately no embeddings** | [`core/memory.py`](backend/core/memory.py) | Under a few dozen memories per user, loading them all beats retrieval — no recall failure mode, no index to keep warm. |
 | **Tools declare their own risk** | [`core/approval.py`](backend/core/approval.py) | A hand-maintained approval map fails *open* when you forget it. `@requires_approval` makes a new destructive tool gated by default. |
@@ -57,7 +59,8 @@ Each one doubles as a worked example of an agent-engineering pattern:
 | Cross-agent long-term memory | `core/store.py` + `core/memory.py` — a Mongo `BaseStore` behind middleware |
 | Human-in-the-loop interrupts | Email Agent — approval before send |
 | Declarative approval policy | `core/approval.py` — tools mark *themselves* destructive |
-| Provider abstraction | `tools/email/` — one protocol, a working mock, a documented Gmail seam |
+| Provider abstraction | `tools/email/`, `tools/weather/`, `tools/todo/` — one protocol each, a working default, documented seams |
+| Parallel fan-out *inside* a tool | `agents/personal_assistant.py` — `daily_briefing` gathers its sources with `asyncio.gather` instead of hoping the model calls them concurrently |
 | RAG | PDF Chatbot — chunk → embed → Atlas Vector Search → grounded answers |
 | MCP tool loading | `tools/mcp.py` + `mcp_servers.json` |
 | Cost & latency telemetry | `core/telemetry.py` — per-run tokens, p95 latency, cost |
@@ -111,6 +114,7 @@ Open **http://localhost:3000**, create an account, and you're in.
 | Agent | Prompt |
 | --- | --- |
 | 🤖 Super Bot | *"Recommend a sci-fi film for tonight, and a dinner I can make with chicken, rice and peppers."* — watch the execution graph show two agents running in parallel |
+| 🌤 Personal Assistant | *"Good morning"* — weather, tasks and a suggestion in one dashboard. It asks for your city once, then remembers it. Add a task with *"remind me to review the PR tomorrow"* |
 | 🍳 Personal Chef | *"I have eggs, spinach and feta. What can I make?"* |
 | ✉️ Email Agent | *"Reply to Jane's coffee email saying Tuesday at 9 works for me."* — you'll be asked to approve before it sends |
 | 💍 Wedding Planner | *"Plan a wedding: NYC to Lisbon, 80 guests, jazz playlist."* |
@@ -130,7 +134,8 @@ Browser (Next.js chat UI :3000)
   └─ auth / upload / metrics ─►  FastAPI gateway   :8000   (api/app.py)
                                        │
                                        └──►  MongoDB Atlas
-                                             memory · checkpoints · users · vectors · prompts
+                                             memory · checkpoints · users · vectors
+                                             prompts · tasks
 ```
 
 ### Planning
@@ -203,9 +208,12 @@ backend/
 ├─ agents/            # one file each: exports `agent` + `MANIFEST`
 ├─ tools/
 │  ├─ mcp.py          # shared MCP loader + retry interceptor
-│  └─ email/          # EmailProvider protocol + mock mailbox + Gmail seam
+│  ├─ email/          # EmailProvider protocol + mock mailbox + Gmail seam
+│  ├─ weather/        # WeatherProvider protocol + Open-Meteo (no API key)
+│  └─ todo/           # TodoProvider protocol + Mongo list + in-process list
 ├─ llm/factory.py     # get_chat_model() — Azure default, 5 providers
 ├─ api/app.py         # FastAPI gateway
+├─ scripts/           # publish_prompts.py — ship changed prompt defaults
 ├─ tests/             # pytest — hermetic, no DB or network
 └─ langgraph.json     # graph ids served by `langgraph dev`
 
@@ -229,6 +237,7 @@ All of `/chat`, `/ask`, `/upload`, `/memories` and `/metrics` need
 | `GET /agents` | The registry — agents and their capabilities |
 | `POST /chat` | `{"query": "..."}` plans across agents; add `"agent_id"` to target one. Returns the answer, the plan, and token usage |
 | `POST /upload` · `POST /ask` | PDF ingestion and RAG Q&A |
+| `POST /threads/title` | Names a conversation from its subject, so the chat list isn't a column of "hello" |
 | `GET /memories` · `DELETE /memories/{key}` | See and delete what's remembered about you |
 | `GET /metrics` | Tokens, median/p95 latency, cost over recent runs |
 | `GET /health` | Liveness + registered agents |
@@ -238,7 +247,7 @@ All of `/chat`, `/ask`, `/upload`, `/memories` and `/metrics` need
 ## Tests
 
 ```bash
-cd backend && pytest        # 83 tests, ~13s — no database, no network
+cd backend && pytest        # 136 tests, ~13s — no database, no network
 ```
 
 `mongomock` backs the store tests, so the MongoDB `BaseStore` is exercised
@@ -407,6 +416,12 @@ registry pointer moves, so the previous one is a rollback away.
   default. Shipping untested Gmail API calls would be worse than an honest gap.
 - **Interrupts through the planner** don't resume cleanly yet — select the Email
   Agent directly for the approval flow. Tracked as gap #1.
+- **The Personal Assistant has no calendar.** Weather and tasks are wired; the
+  briefing says so rather than implying it checked one. Adding it is a coroutine
+  in `_gather` and a section in `_compose`.
+- **"Due today" uses the server's date**, not the user's timezone — a user far
+  enough east or west can see a task flip a day early. Open-Meteo already returns
+  the location's timezone, so the fix has an obvious home.
 - Honest list of what's unfinished: [ARCHITECTURE.md §9](ARCHITECTURE.md#9-known-gaps).
 
 ## Deployment
@@ -416,3 +431,21 @@ single Ubuntu VM — four systemd services, an nginx reverse proxy with SSE
 support for token streaming, and Let's Encrypt SSL. It's written to share a box
 safely with another app: uniquely-named services, non-default ports, and it
 never touches the default nginx site.
+
+**Shipping an update** is a different path — the provisioning script re-runs
+certbot and rewrites the nginx site, so don't use it for this:
+
+```bash
+git pull origin superbot-v2
+.venv/bin/pip install -r backend/requirements.txt
+
+cd backend && ../.venv/bin/python scripts/publish_prompts.py          # dry run
+              ../.venv/bin/python scripts/publish_prompts.py --apply  # then ship
+cd ../frontend && npm run build && cd ..                              # it's a prod build
+
+sudo systemctl restart aibot-langgraph aibot-backend aibot-frontend
+curl -s http://127.0.0.1:8010/health                                  # gateway is :8010 here
+```
+
+The prompt publish has to happen *before* the restart: prompts are read when a
+graph is built, so the restart is what puts a new version in front of the model.
